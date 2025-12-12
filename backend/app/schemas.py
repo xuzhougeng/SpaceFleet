@@ -121,3 +121,21 @@ class UserUsageSummary(BaseModel):
     owner: Optional[str]
     used_gb: float
     percent_of_disk: float  # 占所在磁盘的百分比
+
+
+class FileTypeStats(BaseModel):
+    """文件类型统计"""
+    extension: str
+    size_gb: float
+    file_count: int
+    percent: float  # 占总量百分比
+
+
+class LargeFileInfo(BaseModel):
+    """大文件信息"""
+    filepath: str
+    filename: str
+    extension: str
+    size_gb: float
+    owner: str
+    modified: str

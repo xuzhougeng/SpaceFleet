@@ -398,24 +398,72 @@ function closeModal() {
 }
 
 // ===== 用户空间详情 =====
+// 存储当前查看的服务器和挂载点
+let currentDetailServerId = null;
+let currentDetailMountPoint = null;
+
 async function showUserUsage(serverId, mountPoint) {
     const modal = document.getElementById('users-modal');
     const title = document.getElementById('users-modal-title');
     const list = document.getElementById('users-list');
     
+    currentDetailServerId = serverId;
+    currentDetailMountPoint = mountPoint;
+    
     title.textContent = `目录空间详情 - ${mountPoint}`;
-    list.innerHTML = '<div class="loading">加载中...</div>';
+    
+    // 创建 Tab 结构
+    list.innerHTML = `
+        <div class="detail-tabs">
+            <button class="tab-btn active" onclick="switchDetailTab('directories')">📁 目录占用</button>
+            <button class="tab-btn" onclick="switchDetailTab('filetypes')">📊 文件类型</button>
+            <button class="tab-btn" onclick="switchDetailTab('largefiles')">📦 大文件 Top50</button>
+        </div>
+        <div id="detail-content" class="detail-content">
+            <div class="loading">加载中...</div>
+        </div>
+    `;
     modal.classList.remove('hidden');
     
+    // 默认加载目录占用
+    await loadDirectoriesTab();
+}
+
+async function switchDetailTab(tabName) {
+    // 更新 Tab 按钮状态
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+        btn.classList.remove('active');
+    });
+    event.target.classList.add('active');
+    
+    const content = document.getElementById('detail-content');
+    content.innerHTML = '<div class="loading">加载中...</div>';
+    
+    switch (tabName) {
+        case 'directories':
+            await loadDirectoriesTab();
+            break;
+        case 'filetypes':
+            await loadFileTypesTab();
+            break;
+        case 'largefiles':
+            await loadLargeFilesTab();
+            break;
+    }
+}
+
+async function loadDirectoriesTab() {
+    const content = document.getElementById('detail-content');
+    
     try {
-        const data = await api.getUserUsage(serverId, mountPoint);
+        const data = await api.getUserUsage(currentDetailServerId, currentDetailMountPoint);
         
         if (data.length === 0) {
-            list.innerHTML = '<div class="empty-state"><p>暂无目录数据</p></div>';
+            content.innerHTML = '<div class="empty-state"><p>暂无目录数据</p></div>';
             return;
         }
         
-        list.innerHTML = `
+        content.innerHTML = `
             <table class="users-table">
                 <thead>
                     <tr>
@@ -438,12 +486,102 @@ async function showUserUsage(serverId, mountPoint) {
             </table>
         `;
     } catch (error) {
-        list.innerHTML = `<div class="empty-state"><p>加载失败: ${error.message}</p></div>`;
+        content.innerHTML = `<div class="empty-state"><p>加载失败: ${error.message}</p></div>`;
+    }
+}
+
+async function loadFileTypesTab() {
+    const content = document.getElementById('detail-content');
+    
+    try {
+        const data = await api.getFileTypes(currentDetailServerId, currentDetailMountPoint);
+        
+        if (data.length === 0) {
+            content.innerHTML = '<div class="empty-state"><p>暂无文件类型数据</p></div>';
+            return;
+        }
+        
+        content.innerHTML = `
+            <table class="users-table">
+                <thead>
+                    <tr>
+                        <th>文件类型</th>
+                        <th>占用空间</th>
+                        <th>文件数量</th>
+                        <th>占比</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${data.map(item => `
+                        <tr>
+                            <td><span class="file-ext">.${item.extension}</span></td>
+                            <td>${item.size_gb.toFixed(2)} GB</td>
+                            <td>${item.file_count.toLocaleString()}</td>
+                            <td>
+                                <div class="percent-bar-container">
+                                    <div class="percent-bar" style="width: ${Math.min(item.percent, 100)}%"></div>
+                                    <span>${item.percent.toFixed(1)}%</span>
+                                </div>
+                            </td>
+                        </tr>
+                    `).join('')}
+                </tbody>
+            </table>
+        `;
+    } catch (error) {
+        content.innerHTML = `<div class="empty-state"><p>加载失败: ${error.message}</p></div>`;
+    }
+}
+
+async function loadLargeFilesTab() {
+    const content = document.getElementById('detail-content');
+    
+    try {
+        const data = await api.getLargeFiles(currentDetailServerId, currentDetailMountPoint, 50);
+        
+        if (data.length === 0) {
+            content.innerHTML = '<div class="empty-state"><p>暂无大文件数据</p></div>';
+            return;
+        }
+        
+        content.innerHTML = `
+            <table class="users-table large-files-table">
+                <thead>
+                    <tr>
+                        <th>#</th>
+                        <th>文件名</th>
+                        <th>大小</th>
+                        <th>所有者</th>
+                        <th>修改时间</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${data.map((item, index) => `
+                        <tr>
+                            <td class="rank-cell">${index + 1}</td>
+                            <td>
+                                <div class="file-info">
+                                    <span class="filename" title="${item.filepath}">${item.filename}</span>
+                                    <span class="filepath">${item.filepath}</span>
+                                </div>
+                            </td>
+                            <td class="size-cell">${item.size_gb.toFixed(2)} GB</td>
+                            <td>${item.owner}</td>
+                            <td class="date-cell">${item.modified.replace('T', ' ')}</td>
+                        </tr>
+                    `).join('')}
+                </tbody>
+            </table>
+        `;
+    } catch (error) {
+        content.innerHTML = `<div class="empty-state"><p>加载失败: ${error.message}</p></div>`;
     }
 }
 
 function closeUsersModal() {
     document.getElementById('users-modal').classList.add('hidden');
+    currentDetailServerId = null;
+    currentDetailMountPoint = null;
 }
 
 // ===== 趋势分析 =====

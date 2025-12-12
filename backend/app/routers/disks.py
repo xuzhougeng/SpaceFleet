@@ -13,9 +13,12 @@ from app.schemas import (
     ServerDiskSummary,
     DiskTrend,
     UserUsageSummary,
+    FileTypeStats,
+    LargeFileInfo,
 )
 from app.config import settings
-from app.collector import collect_server_data, collect_all_servers
+from app.collector import collect_server_data, collect_all_servers, get_file_type_stats, get_top_large_files
+from app.ssh_client import SSHClient
 
 router = APIRouter(prefix="/disks", tags=["disks"])
 
@@ -207,3 +210,64 @@ def trigger_collection(
     else:
         results = collect_all_servers(db)
         return {"results": results}
+
+
+@router.get("/filetypes/{server_id}/{mount_point:path}", response_model=List[FileTypeStats])
+def get_file_types(
+    server_id: int,
+    mount_point: str,
+    db: Session = Depends(get_db)
+):
+    """获取指定挂载点下文件类型占比统计（实时获取）"""
+    if not mount_point.startswith('/'):
+        mount_point = '/' + mount_point
+    
+    server = db.query(Server).filter(Server.id == server_id).first()
+    if not server:
+        raise HTTPException(status_code=404, detail="Server not found")
+    
+    try:
+        ssh = SSHClient(
+            host=server.host,
+            port=server.port,
+            username=server.username,
+            password=server.password,
+            private_key_path=server.private_key_path,
+        )
+        
+        with ssh:
+            stats = get_file_type_stats(ssh, mount_point)
+            return [FileTypeStats(**s) for s in stats]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/largefiles/{server_id}/{mount_point:path}", response_model=List[LargeFileInfo])
+def get_large_files(
+    server_id: int,
+    mount_point: str,
+    limit: int = Query(default=50, le=100),
+    db: Session = Depends(get_db)
+):
+    """获取指定挂载点下最大的文件列表（实时获取）"""
+    if not mount_point.startswith('/'):
+        mount_point = '/' + mount_point
+    
+    server = db.query(Server).filter(Server.id == server_id).first()
+    if not server:
+        raise HTTPException(status_code=404, detail="Server not found")
+    
+    try:
+        ssh = SSHClient(
+            host=server.host,
+            port=server.port,
+            username=server.username,
+            password=server.password,
+            private_key_path=server.private_key_path,
+        )
+        
+        with ssh:
+            files = get_top_large_files(ssh, mount_point, limit)
+            return [LargeFileInfo(**f) for f in files]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

@@ -257,3 +257,129 @@ def collect_all_servers(db: Session) -> List[Dict[str, Any]]:
         results.append(result)
     
     return results
+
+
+def get_file_type_stats(ssh: SSHClient, mount_point: str) -> List[Dict[str, Any]]:
+    """
+    获取指定挂载点下文件类型占比统计
+    
+    Returns:
+        按大小降序排列的文件类型统计列表
+    """
+    # 使用 find 和 awk 统计各扩展名占用的空间
+    # 限制深度避免过长执行时间
+    cmd = f"""find {mount_point} -maxdepth 5 -type f -printf '%s %f\\n' 2>/dev/null | \\
+awk '{{
+    size = $1
+    fname = $2
+    # 提取扩展名
+    n = split(fname, parts, ".")
+    if (n > 1 && length(parts[n]) <= 10) {{
+        ext = tolower(parts[n])
+    }} else {{
+        ext = "no_ext"
+    }}
+    sizes[ext] += size
+    counts[ext]++
+}}
+END {{
+    for (ext in sizes) {{
+        printf "%s\\t%d\\t%d\\n", ext, sizes[ext], counts[ext]
+    }}
+}}' | sort -t$'\\t' -k2 -rn | head -20"""
+    
+    stdout, stderr, code = ssh.execute(cmd)
+    
+    if not stdout.strip():
+        return []
+    
+    results = []
+    total_size = 0
+    
+    # 先计算总大小
+    lines = stdout.strip().split('\n')
+    for line in lines:
+        parts = line.split('\t')
+        if len(parts) >= 2:
+            try:
+                total_size += int(parts[1])
+            except ValueError:
+                continue
+    
+    # 解析各类型
+    for line in lines:
+        parts = line.split('\t')
+        if len(parts) < 3:
+            continue
+        
+        try:
+            ext = parts[0]
+            size_bytes = int(parts[1])
+            count = int(parts[2])
+            size_gb = size_bytes / (1024 * 1024 * 1024)
+            percent = (size_bytes / total_size * 100) if total_size > 0 else 0
+            
+            results.append({
+                'extension': ext,
+                'size_gb': round(size_gb, 2),
+                'file_count': count,
+                'percent': round(percent, 2),
+            })
+        except ValueError:
+            continue
+    
+    return results
+
+
+def get_top_large_files(ssh: SSHClient, mount_point: str, limit: int = 50) -> List[Dict[str, Any]]:
+    """
+    获取指定挂载点下最大的文件
+    
+    Args:
+        ssh: SSH 客户端
+        mount_point: 挂载点
+        limit: 返回数量限制
+    
+    Returns:
+        按大小降序排列的文件列表
+    """
+    # 使用 find 查找大文件并排序
+    cmd = f"""find {mount_point} -maxdepth 6 -type f -printf '%s\\t%u\\t%T+\\t%p\\n' 2>/dev/null | \\
+sort -t$'\\t' -k1 -rn | head -{limit}"""
+    
+    stdout, stderr, code = ssh.execute(cmd)
+    
+    if not stdout.strip():
+        return []
+    
+    results = []
+    for line in stdout.strip().split('\n'):
+        parts = line.split('\t')
+        if len(parts) < 4:
+            continue
+        
+        try:
+            size_bytes = int(parts[0])
+            owner = parts[1]
+            modified = parts[2][:19] if len(parts[2]) >= 19 else parts[2]  # 截取日期时间
+            filepath = parts[3]
+            
+            # 提取扩展名
+            filename = filepath.split('/')[-1]
+            ext_parts = filename.rsplit('.', 1)
+            extension = ext_parts[1].lower() if len(ext_parts) > 1 and len(ext_parts[1]) <= 10 else ''
+            
+            size_gb = size_bytes / (1024 * 1024 * 1024)
+            
+            results.append({
+                'filepath': filepath,
+                'filename': filename,
+                'extension': extension,
+                'size_gb': round(size_gb, 2),
+                'owner': owner,
+                'modified': modified,
+            })
+        except (ValueError, IndexError):
+            continue
+    
+    return results

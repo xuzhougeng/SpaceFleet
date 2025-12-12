@@ -128,6 +128,22 @@ const api = {
     },
 
     /**
+     * 获取文件类型统计
+     */
+    async getFileTypes(serverId, mountPoint) {
+        const mount = mountPoint.startsWith('/') ? mountPoint.slice(1) : mountPoint;
+        return this.request(`/disks/filetypes/${serverId}/${mount}`);
+    },
+
+    /**
+     * 获取最大文件列表
+     */
+    async getLargeFiles(serverId, mountPoint, limit = 50) {
+        const mount = mountPoint.startsWith('/') ? mountPoint.slice(1) : mountPoint;
+        return this.request(`/disks/largefiles/${serverId}/${mount}?limit=${limit}`);
+    },
+
+    /**
      * 触发数据采集
      */
     async collectData(serverId = null) {
