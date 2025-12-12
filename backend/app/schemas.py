@@ -16,6 +16,7 @@ class ServerBase(BaseModel):
     os_type: str = "ubuntu"
     description: Optional[str] = None
     scan_mounts: Optional[str] = None  # 要扫描的挂载点，逗号分隔，空表示全部
+    enabled: bool = True
 
 
 class ServerCreate(ServerBase):
@@ -33,6 +34,7 @@ class ServerUpdate(BaseModel):
     os_type: Optional[str] = None
     description: Optional[str] = None
     scan_mounts: Optional[str] = None
+    enabled: Optional[bool] = None
 
 
 class ServerResponse(ServerBase):

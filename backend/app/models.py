@@ -20,6 +20,7 @@ class Server(Base):
     os_type = Column(String(20), default="ubuntu")  # ubuntu / centos
     description = Column(Text, nullable=True)  # 服务器描述
     scan_mounts = Column(Text, nullable=True)  # 要扫描的挂载点，逗号分隔，空表示全部
+    enabled = Column(Boolean, default=True)  # 是否启用采集
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     

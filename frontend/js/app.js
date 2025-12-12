@@ -260,29 +260,54 @@ function renderServerCard(server) {
     const scanInfo = server.scan_mounts 
         ? `<span class="server-scan">📁 ${server.scan_mounts}</span>` 
         : '<span class="server-scan">📁 所有磁盘</span>';
+
+    const enabled = server.enabled !== false;
+    const statusTag = enabled
+        ? '<span class="server-status enabled">✅ 启用</span>'
+        : '<span class="server-status disabled">🚫 禁用</span>';
+
+    const collectBtn = enabled
+        ? `<button class="btn btn-sm btn-secondary" onclick="collectServerData(${server.id})">🔄 采集数据</button>`
+        : `<button class="btn btn-sm btn-secondary" disabled>🚫 已禁用</button>`;
+
+    const toggleBtn = enabled
+        ? `<button class="btn btn-sm btn-warning" onclick="toggleServerEnabled(${server.id}, false)">🚫 禁用</button>`
+        : `<button class="btn btn-sm btn-secondary" onclick="toggleServerEnabled(${server.id}, true)">✅ 启用</button>`;
+
     return `
-        <div class="server-card">
+        <div class="server-card ${enabled ? '' : 'disabled'}">
             <div class="server-info">
                 <div class="server-name">${server.name}</div>
-                <div class="server-host">${server.username}@${server.host}:${server.port} ${scanInfo}</div>
+                <div class="server-host">${server.username}@${server.host}:${server.port} ${scanInfo} ${statusTag}</div>
                 ${server.description ? `<div class="server-description">${server.description}</div>` : ''}
             </div>
             <div class="server-actions">
                 <button class="btn btn-sm btn-secondary" onclick="testConnection(${server.id})">
                     🔌 测试连接
                 </button>
-                <button class="btn btn-sm btn-secondary" onclick="collectServerData(${server.id})">
-                    🔄 采集数据
-                </button>
+                ${collectBtn}
                 <button class="btn btn-sm btn-secondary" onclick="editServer(${server.id})">
                     ✏️ 编辑
                 </button>
+                ${toggleBtn}
                 <button class="btn btn-sm btn-danger" onclick="deleteServer(${server.id})">
                     🗑️ 删除
                 </button>
             </div>
         </div>
     `;
+}
+
+async function toggleServerEnabled(id, enabled) {
+    try {
+        await api.updateServer(id, { enabled });
+        showToast(enabled ? '服务器已启用' : '服务器已禁用', 'success');
+        loadServers();
+        // 仪表盘数据可能变化
+        loadDashboard();
+    } catch (error) {
+        showToast('操作失败: ' + error.message, 'error');
+    }
 }
 
 function showAddServerModal() {
@@ -379,6 +404,11 @@ async function testConnection(id) {
 }
 
 async function collectServerData(id) {
+    const server = servers.find(s => s.id === id);
+    if (server && server.enabled === false) {
+        showToast('该服务器已禁用，无法采集', 'info');
+        return;
+    }
     // 防止重复点击
     if (collectingState.servers.has(id) || collectingState.all) {
         showToast('该服务器正在采集中，请稍候...', 'info');

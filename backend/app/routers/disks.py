@@ -47,6 +47,7 @@ def get_disk_summary(db: Session = Depends(get_db)):
     latest_disks = (
         db.query(DiskUsage, Server.name)
         .join(Server)
+        .filter(Server.enabled == True)
         .join(
             subquery,
             (DiskUsage.server_id == subquery.c.server_id) &
@@ -210,6 +211,8 @@ def trigger_collection(
         server = db.query(Server).filter(Server.id == server_id).first()
         if not server:
             raise HTTPException(status_code=404, detail="Server not found")
+        if not server.enabled:
+            raise HTTPException(status_code=400, detail="Server is disabled")
         result = collect_server_data(db, server)
         return {"results": [result]}
     else:
@@ -260,6 +263,11 @@ def _refresh_analysis_cache(server_id: int, mount_point: str, kind: str) -> None
         if not server:
             cache.refreshing = False
             cache.error = "Server not found"
+            db.commit()
+            return
+        if not server.enabled:
+            cache.refreshing = False
+            cache.error = "Server is disabled"
             db.commit()
             return
 

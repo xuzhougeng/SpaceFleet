@@ -2,6 +2,7 @@ import warnings
 from contextlib import asynccontextmanager
 from pathlib import Path
 from fastapi import FastAPI
+from sqlalchemy import text
 
 # 过滤 paramiko 的 TripleDES 弃用警告
 warnings.filterwarnings("ignore", message=".*TripleDES.*")
@@ -14,11 +15,22 @@ from app.routers import servers, disks
 from app.scheduler import start_scheduler, stop_scheduler
 
 
+def _ensure_sqlite_schema():
+    if engine.dialect.name != "sqlite":
+        return
+    with engine.begin() as conn:
+        cols = [row[1] for row in conn.execute(text("PRAGMA table_info(servers)")).fetchall()]
+        if "enabled" not in cols:
+            conn.execute(text("ALTER TABLE servers ADD COLUMN enabled INTEGER DEFAULT 1"))
+            conn.execute(text("UPDATE servers SET enabled=1 WHERE enabled IS NULL"))
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期管理"""
     # Startup
     Base.metadata.create_all(bind=engine)
+    _ensure_sqlite_schema()
     start_scheduler()
     yield
     # Shutdown

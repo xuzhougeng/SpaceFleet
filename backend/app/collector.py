@@ -249,7 +249,7 @@ def collect_all_servers(db: Session) -> List[Dict[str, Any]]:
     """
     采集所有服务器的磁盘数据
     """
-    servers = db.query(Server).all()
+    servers = db.query(Server).filter(Server.enabled == True).all()
     results = []
     
     for server in servers:
