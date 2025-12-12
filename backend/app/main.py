@@ -23,6 +23,9 @@ def _ensure_sqlite_schema():
         if "enabled" not in cols:
             conn.execute(text("ALTER TABLE servers ADD COLUMN enabled INTEGER DEFAULT 1"))
             conn.execute(text("UPDATE servers SET enabled=1 WHERE enabled IS NULL"))
+        if "sudoer" not in cols:
+            conn.execute(text("ALTER TABLE servers ADD COLUMN sudoer INTEGER DEFAULT 0"))
+            conn.execute(text("UPDATE servers SET sudoer=0 WHERE sudoer IS NULL"))
 
 
 @asynccontextmanager

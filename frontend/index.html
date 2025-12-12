@@ -130,6 +130,13 @@
                     <input type="text" id="server-scanmounts" placeholder="例如: /data,/home（留空扫描所有）">
                     <small class="form-hint">指定要监控的挂载点，多个用逗号分隔，留空表示扫描所有磁盘</small>
                 </div>
+                <div class="form-group">
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="server-sudoer">
+                        使用 sudo 扫描（需要服务器配置免密 sudo）
+                    </label>
+                    <small class="form-hint">开启后将使用 sudo 执行扫描命令以避免权限不足。若未配置 NOPASSWD sudo，会导致扫描失败。</small>
+                </div>
                 <div class="form-actions">
                     <button type="button" class="btn btn-secondary" onclick="closeModal()">取消</button>
                     <button type="submit" class="btn btn-primary">保存</button>

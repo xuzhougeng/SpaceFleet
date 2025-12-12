@@ -17,6 +17,7 @@ class ServerBase(BaseModel):
     description: Optional[str] = None
     scan_mounts: Optional[str] = None  # 要扫描的挂载点，逗号分隔，空表示全部
     enabled: bool = True
+    sudoer: bool = False
 
 
 class ServerCreate(ServerBase):
@@ -35,6 +36,7 @@ class ServerUpdate(BaseModel):
     description: Optional[str] = None
     scan_mounts: Optional[str] = None
     enabled: Optional[bool] = None
+    sudoer: Optional[bool] = None
 
 
 class ServerResponse(ServerBase):

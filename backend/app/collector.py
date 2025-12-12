@@ -1,11 +1,19 @@
 import re
 from datetime import datetime
 from typing import List, Dict, Any, Optional
+import shlex
 from sqlalchemy.orm import Session
 
 from app.ssh_client import SSHClient
 from app.models import Server, DiskUsage, UserDiskUsage
 from app.config import settings
+
+
+def _wrap_sudo(command: str, use_sudo: bool) -> str:
+    if not use_sudo:
+        return command
+    # -n: non-interactive, fail fast if password is required
+    return f"sudo -n bash -lc {shlex.quote(command)}"
 
 
 def parse_size_to_gb(size_str: str) -> float:
@@ -34,7 +42,11 @@ def parse_size_to_gb(size_str: str) -> float:
     return value * multipliers.get(unit, 1)
 
 
-def collect_disk_usage(ssh: SSHClient, scan_mounts: Optional[List[str]] = None) -> tuple[List[Dict[str, Any]], List[str]]:
+def collect_disk_usage(
+    ssh: SSHClient,
+    scan_mounts: Optional[List[str]] = None,
+    use_sudo: bool = False,
+) -> tuple[List[Dict[str, Any]], List[str]]:
     """
     采集磁盘使用情况
     
@@ -47,7 +59,7 @@ def collect_disk_usage(ssh: SSHClient, scan_mounts: Optional[List[str]] = None) 
     Returns:
         (disks, all_mount_points): 采集到的磁盘列表和服务器上所有可用挂载点
     """
-    stdout, stderr, code = ssh.execute("df -hT")
+    stdout, stderr, code = ssh.execute(_wrap_sudo("df -hT", use_sudo))
     
     if code != 0:
         raise RuntimeError(f"Failed to execute df: {stderr}")
@@ -110,13 +122,13 @@ def collect_disk_usage(ssh: SSHClient, scan_mounts: Optional[List[str]] = None) 
     return disks, all_mount_points
 
 
-def collect_user_usage(ssh: SSHClient, mount_point: str) -> List[Dict[str, Any]]:
+def collect_user_usage(ssh: SSHClient, mount_point: str, use_sudo: bool = False) -> List[Dict[str, Any]]:
     """
     采集指定挂载点下各一级目录的空间占用
     """
     # 使用 du 统计一级子目录
     cmd = f"du -s {mount_point}/*  2>/dev/null | sort -rn"
-    stdout, stderr, code = ssh.execute(cmd)
+    stdout, stderr, code = ssh.execute(_wrap_sudo(cmd, use_sudo), timeout=3600)
     
     # du 可能部分失败（权限问题），但仍返回部分结果
     if not stdout.strip():
@@ -124,7 +136,7 @@ def collect_user_usage(ssh: SSHClient, mount_point: str) -> List[Dict[str, Any]]
     
     # 获取目录所有者
     owner_cmd = f"stat -c '%U %n' {mount_point}/*  2>/dev/null"
-    owner_stdout, _, _ = ssh.execute(owner_cmd)
+    owner_stdout, _, _ = ssh.execute(_wrap_sudo(owner_cmd, use_sudo), timeout=3600)
     
     # 解析所有者信息
     owners = {}
@@ -187,6 +199,7 @@ def collect_server_data(db: Session, server: Server) -> Dict[str, Any]:
         
         with ssh:
             collected_at = datetime.utcnow()
+            use_sudo = bool(getattr(server, 'sudoer', False))
             
             # 解析配置的扫描挂载点
             scan_mounts = None
@@ -194,7 +207,7 @@ def collect_server_data(db: Session, server: Server) -> Dict[str, Any]:
                 scan_mounts = [m.strip() for m in server.scan_mounts.split(',') if m.strip()]
             
             # 采集磁盘使用情况
-            disks, all_mount_points = collect_disk_usage(ssh, scan_mounts)
+            disks, all_mount_points = collect_disk_usage(ssh, scan_mounts, use_sudo=use_sudo)
             result['available_mounts'] = all_mount_points
             
             # 如果配置了扫描挂载点但没有采集到任何磁盘，给出提示
@@ -221,7 +234,7 @@ def collect_server_data(db: Session, server: Server) -> Dict[str, Any]:
                 # 采集用户空间占用（仅对数据盘）
                 # 排除根分区，只分析 /data, /home 等目录
                 if disk['mount_point'] not in ('/',):
-                    users = collect_user_usage(ssh, disk['mount_point'])
+                    users = collect_user_usage(ssh, disk['mount_point'], use_sudo=use_sudo)
                     
                     for user in users:
                         user_usage = UserDiskUsage(
@@ -259,7 +272,7 @@ def collect_all_servers(db: Session) -> List[Dict[str, Any]]:
     return results
 
 
-def get_file_type_stats(ssh: SSHClient, mount_point: str) -> List[Dict[str, Any]]:
+def get_file_type_stats(ssh: SSHClient, mount_point: str, use_sudo: bool = False) -> List[Dict[str, Any]]:
     """
     获取指定挂载点下文件类型占比统计
     
@@ -290,7 +303,7 @@ END {{
     }}
 }}' | sort -t$'\\t' -k2 -rn | head -20"""
     
-    stdout, stderr, code = ssh.execute(cmd, timeout=3600)
+    stdout, stderr, code = ssh.execute(_wrap_sudo(cmd, use_sudo), timeout=3600)
     
     if not stdout.strip():
         return []
@@ -326,7 +339,7 @@ END {{
     return results
 
 
-def get_top_large_files(ssh: SSHClient, mount_point: str, limit: int = 50) -> List[Dict[str, Any]]:
+def get_top_large_files(ssh: SSHClient, mount_point: str, limit: int = 50, use_sudo: bool = False) -> List[Dict[str, Any]]:
     """
     获取指定挂载点下最大的文件
     
@@ -351,7 +364,7 @@ awk -v N={limit} 'BEGIN{{for(i=1;i<=N;i++){{s[i]=-1;line[i]=""}}}} {{
     }}
 }} END{{for(i=1;i<=N;i++){{if(s[i]>=0) print line[i]}}}}'"""
     
-    stdout, stderr, code = ssh.execute(cmd, timeout=3600)
+    stdout, stderr, code = ssh.execute(_wrap_sudo(cmd, use_sudo), timeout=3600)
     
     if not stdout.strip():
         return []

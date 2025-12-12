@@ -331,6 +331,16 @@ body {
     color: #dc2626;
 }
 
+.server-sudo {
+    display: inline-block;
+    margin-left: 8px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 0.75rem;
+    background-color: rgba(59, 130, 246, 0.12);
+    color: #2563eb;
+}
+
 .server-info {
     flex: 1;
 }
@@ -466,6 +476,20 @@ body {
     font-weight: 500;
     margin-bottom: 6px;
     color: var(--text-primary);
+}
+
+.checkbox-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 500;
+    margin-bottom: 6px;
+    color: var(--text-primary);
+}
+
+.checkbox-label input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
 }
 
 .form-group input,

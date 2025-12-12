@@ -281,9 +281,9 @@ def _refresh_analysis_cache(server_id: int, mount_point: str, kind: str) -> None
 
         with ssh:
             if kind == "filetypes":
-                data = get_file_type_stats(ssh, mount_point)
+                data = get_file_type_stats(ssh, mount_point, use_sudo=bool(getattr(server, 'sudoer', False)))
             elif kind == "largefiles":
-                data = get_top_large_files(ssh, mount_point, 50)
+                data = get_top_large_files(ssh, mount_point, 50, use_sudo=bool(getattr(server, 'sudoer', False)))
             else:
                 data = []
 
@@ -332,7 +332,7 @@ def get_file_types(
                 private_key_path=server.private_key_path,
             )
             with ssh:
-                data = get_file_type_stats(ssh, mount_point)
+                data = get_file_type_stats(ssh, mount_point, use_sudo=bool(getattr(server, 'sudoer', False)))
             cache.data_json = json.dumps(data, ensure_ascii=False)
             cache.collected_at = datetime.utcnow()
             cache.refreshing = False
@@ -402,7 +402,7 @@ def get_large_files(
                 private_key_path=server.private_key_path,
             )
             with ssh:
-                data = get_top_large_files(ssh, mount_point, 50)
+                data = get_top_large_files(ssh, mount_point, 50, use_sudo=bool(getattr(server, 'sudoer', False)))
             cache.data_json = json.dumps(data, ensure_ascii=False)
             cache.collected_at = datetime.utcnow()
             cache.refreshing = False

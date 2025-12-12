@@ -262,6 +262,9 @@ function renderServerCard(server) {
         : '<span class="server-scan">📁 所有磁盘</span>';
 
     const enabled = server.enabled !== false;
+    const sudoTag = server.sudoer
+        ? '<span class="server-sudo">🛡️ sudo</span>'
+        : '';
     const statusTag = enabled
         ? '<span class="server-status enabled">✅ 启用</span>'
         : '<span class="server-status disabled">🚫 禁用</span>';
@@ -278,7 +281,7 @@ function renderServerCard(server) {
         <div class="server-card ${enabled ? '' : 'disabled'}">
             <div class="server-info">
                 <div class="server-name">${server.name}</div>
-                <div class="server-host">${server.username}@${server.host}:${server.port} ${scanInfo} ${statusTag}</div>
+                <div class="server-host">${server.username}@${server.host}:${server.port} ${scanInfo} ${statusTag} ${sudoTag}</div>
                 ${server.description ? `<div class="server-description">${server.description}</div>` : ''}
             </div>
             <div class="server-actions">
@@ -315,6 +318,8 @@ function showAddServerModal() {
     document.getElementById('server-form').reset();
     document.getElementById('server-id').value = '';
     document.getElementById('server-port').value = '22';
+    const sudoEl = document.getElementById('server-sudoer');
+    if (sudoEl) sudoEl.checked = false;
     document.getElementById('server-modal').classList.remove('hidden');
 }
 
@@ -332,6 +337,8 @@ async function editServer(id) {
         document.getElementById('server-keypath').value = server.private_key_path || '';
         document.getElementById('server-description').value = server.description || '';
         document.getElementById('server-scanmounts').value = server.scan_mounts || '';
+        const sudoEl = document.getElementById('server-sudoer');
+        if (sudoEl) sudoEl.checked = !!server.sudoer;
         
         document.getElementById('server-modal').classList.remove('hidden');
     } catch (error) {
@@ -350,6 +357,7 @@ async function saveServer(event) {
         username: document.getElementById('server-username').value,
         description: document.getElementById('server-description').value || null,
         scan_mounts: document.getElementById('server-scanmounts').value || null,
+        sudoer: !!document.getElementById('server-sudoer')?.checked,
     };
     
     const password = document.getElementById('server-password').value;
