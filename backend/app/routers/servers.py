@@ -85,3 +85,46 @@ def test_server_connection(server_id: int, db: Session = Depends(get_db)):
     
     success, message = ssh.test_connection()
     return {"success": success, "message": message}
+
+
+@router.post("/{server_id}/test-sudo")
+def test_server_sudo(server_id: int, db: Session = Depends(get_db)):
+    """测试服务器 sudo 是否可用（需要配置 NOPASSWD），使用 sudo -n 非交互方式"""
+    server = db.query(Server).filter(Server.id == server_id).first()
+    if not server:
+        raise HTTPException(status_code=404, detail="Server not found")
+
+    ssh = SSHClient(
+        host=server.host,
+        port=server.port,
+        username=server.username,
+        password=server.password,
+        private_key_path=server.private_key_path,
+    )
+
+    try:
+        with ssh:
+            # `sudo -n true` 会在需要密码时立刻失败（退出码通常为 1）
+            stdout, stderr, code = ssh.execute("sudo -n true")
+            if code == 0:
+                who_stdout, who_stderr, who_code = ssh.execute("sudo -n whoami")
+            else:
+                who_stdout, who_stderr, who_code = "", "", code
+
+        return {
+            "success": code == 0,
+            "exit_code": code,
+            "stdout": stdout,
+            "stderr": stderr,
+            "sudo_whoami": (who_stdout or "").strip() if code == 0 else None,
+            "message": "sudo available" if code == 0 else "sudo not available (NOPASSWD not configured or sudo missing)",
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "exit_code": None,
+            "stdout": "",
+            "stderr": "",
+            "sudo_whoami": None,
+            "message": str(e),
+        }

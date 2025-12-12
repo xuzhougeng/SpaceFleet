@@ -87,6 +87,15 @@ const api = {
         });
     },
 
+    /**
+     * 测试 sudo 是否可用（需要 NOPASSWD）
+     */
+    async testSudo(id) {
+        return this.request(`/servers/${id}/test-sudo`, {
+            method: 'POST',
+        });
+    },
+
     // ===== 磁盘相关 =====
 
     /**

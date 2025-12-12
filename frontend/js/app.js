@@ -7,6 +7,12 @@ let servers = [];
 let diskSummary = [];
 let currentMountPoints = [];
 
+// sudo 测试结果缓存（仅前端展示，不持久化）
+const sudoTestState = {
+    results: new Map(), // serverId -> { status, message, at, details }
+    testing: new Set(),
+};
+
 // 采集任务锁定状态
 const collectingState = {
     all: false,           // 全局采集中
@@ -30,6 +36,47 @@ function initNavigation() {
             switchPage(page);
         });
     });
+}
+
+async function testSudo(id) {
+    const server = servers.find(s => s.id === id);
+    if (server && server.enabled === false) {
+        showToast('该服务器已禁用，无法测试 sudo', 'info');
+        return;
+    }
+
+    if (sudoTestState.testing.has(id)) {
+        showToast('正在测试 sudo，请稍候...', 'info');
+        return;
+    }
+
+    sudoTestState.testing.add(id);
+    loadServers();
+
+    try {
+        const result = await api.testSudo(id);
+        const at = new Date().toLocaleString();
+        if (result.success) {
+            const who = result.sudo_whoami ? `（whoami: ${result.sudo_whoami}）` : '';
+            const msg = `✅ 可用${who}`;
+            sudoTestState.results.set(id, { status: 'success', message: msg, at, details: result });
+            showToast('sudo 可用 ' + who, 'success');
+        } else {
+            const exit = (result.exit_code === null || result.exit_code === undefined) ? 'unknown' : result.exit_code;
+            const err = (result.stderr || result.message || '').toString().trim();
+            const msg = `❌ 不可用（exit: ${exit}）${err ? `: ${err}` : ''}`;
+            sudoTestState.results.set(id, { status: 'error', message: msg, at, details: result });
+            showToast(msg, 'error');
+        }
+    } catch (error) {
+        const at = new Date().toLocaleString();
+        const msg = `❌ 测试失败: ${error.message}`;
+        sudoTestState.results.set(id, { status: 'error', message: msg, at, details: null });
+        showToast(msg, 'error');
+    } finally {
+        sudoTestState.testing.delete(id);
+        loadServers();
+    }
 }
 
 function renderAnalysisMeta(meta, tabName) {
@@ -277,17 +324,28 @@ function renderServerCard(server) {
         ? `<button class="btn btn-sm btn-warning" onclick="toggleServerEnabled(${server.id}, false)">🚫 禁用</button>`
         : `<button class="btn btn-sm btn-secondary" onclick="toggleServerEnabled(${server.id}, true)">✅ 启用</button>`;
 
+    const sudoTest = sudoTestState.results.get(server.id);
+    const sudoTestText = sudoTest
+        ? `<div class="server-description">sudo 测试：${sudoTest.message}（${sudoTest.at}）</div>`
+        : '';
+
+    const sudoTestBtn = `<button class="btn btn-sm btn-secondary" onclick="testSudo(${server.id})" ${sudoTestState.testing.has(server.id) ? 'disabled' : ''}>
+        ${sudoTestState.testing.has(server.id) ? '⏳ 测试 sudo...' : '🛡️ 测试 sudo'}
+    </button>`;
+
     return `
         <div class="server-card ${enabled ? '' : 'disabled'}">
             <div class="server-info">
                 <div class="server-name">${server.name}</div>
                 <div class="server-host">${server.username}@${server.host}:${server.port} ${scanInfo} ${statusTag} ${sudoTag}</div>
                 ${server.description ? `<div class="server-description">${server.description}</div>` : ''}
+                ${sudoTestText}
             </div>
             <div class="server-actions">
                 <button class="btn btn-sm btn-secondary" onclick="testConnection(${server.id})">
                     🔌 测试连接
                 </button>
+                ${sudoTestBtn}
                 ${collectBtn}
                 <button class="btn btn-sm btn-secondary" onclick="editServer(${server.id})">
                     ✏️ 编辑
