@@ -1,11 +1,14 @@
 from datetime import datetime, timedelta
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, Query
+import json
+
+from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
 from sqlalchemy.orm import Session
 from sqlalchemy import func, desc
+from sqlalchemy.exc import IntegrityError
 
-from app.database import get_db
-from app.models import Server, DiskUsage, UserDiskUsage
+from app.database import get_db, SessionLocal
+from app.models import Server, DiskUsage, UserDiskUsage, AnalysisCache
 from app.schemas import (
     DiskUsageResponse, 
     UserDiskUsageResponse,
@@ -15,6 +18,8 @@ from app.schemas import (
     UserUsageSummary,
     FileTypeStats,
     LargeFileInfo,
+    FileTypeAnalysisResponse,
+    LargeFilesAnalysisResponse,
 )
 from app.config import settings
 from app.collector import collect_server_data, collect_all_servers, get_file_type_stats, get_top_large_files
@@ -212,62 +217,220 @@ def trigger_collection(
         return {"results": results}
 
 
-@router.get("/filetypes/{server_id}/{mount_point:path}", response_model=List[FileTypeStats])
+
+def _get_or_create_cache(db: Session, server_id: int, mount_point: str, kind: str) -> AnalysisCache:
+    cache = (
+        db.query(AnalysisCache)
+        .filter(
+            AnalysisCache.server_id == server_id,
+            AnalysisCache.mount_point == mount_point,
+            AnalysisCache.kind == kind,
+        )
+        .first()
+    )
+    if cache:
+        return cache
+    cache = AnalysisCache(server_id=server_id, mount_point=mount_point, kind=kind, refreshing=False)
+    db.add(cache)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        cache = (
+            db.query(AnalysisCache)
+            .filter(
+                AnalysisCache.server_id == server_id,
+                AnalysisCache.mount_point == mount_point,
+                AnalysisCache.kind == kind,
+            )
+            .first()
+        )
+        if cache:
+            return cache
+        raise
+    db.refresh(cache)
+    return cache
+
+
+def _refresh_analysis_cache(server_id: int, mount_point: str, kind: str) -> None:
+    db = SessionLocal()
+    try:
+        cache = _get_or_create_cache(db, server_id, mount_point, kind)
+        server = db.query(Server).filter(Server.id == server_id).first()
+        if not server:
+            cache.refreshing = False
+            cache.error = "Server not found"
+            db.commit()
+            return
+
+        ssh = SSHClient(
+            host=server.host,
+            port=server.port,
+            username=server.username,
+            password=server.password,
+            private_key_path=server.private_key_path,
+        )
+
+        with ssh:
+            if kind == "filetypes":
+                data = get_file_type_stats(ssh, mount_point)
+            elif kind == "largefiles":
+                data = get_top_large_files(ssh, mount_point, 50)
+            else:
+                data = []
+
+        cache.data_json = json.dumps(data, ensure_ascii=False)
+        cache.collected_at = datetime.utcnow()
+        cache.refreshing = False
+        cache.error = None
+        db.commit()
+    except Exception as e:
+        try:
+            cache = _get_or_create_cache(db, server_id, mount_point, kind)
+            cache.refreshing = False
+            cache.error = str(e)
+            db.commit()
+        except Exception:
+            pass
+    finally:
+        db.close()
+
+
+@router.get("/filetypes/{server_id}/{mount_point:path}", response_model=FileTypeAnalysisResponse)
 def get_file_types(
     server_id: int,
     mount_point: str,
+    background_tasks: BackgroundTasks,
+    force: bool = Query(default=False),
     db: Session = Depends(get_db)
 ):
-    """获取指定挂载点下文件类型占比统计（实时获取）"""
     if not mount_point.startswith('/'):
         mount_point = '/' + mount_point
-    
-    server = db.query(Server).filter(Server.id == server_id).first()
-    if not server:
-        raise HTTPException(status_code=404, detail="Server not found")
-    
-    try:
-        ssh = SSHClient(
-            host=server.host,
-            port=server.port,
-            username=server.username,
-            password=server.password,
-            private_key_path=server.private_key_path,
-        )
-        
-        with ssh:
-            stats = get_file_type_stats(ssh, mount_point)
-            return [FileTypeStats(**s) for s in stats]
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+
+    cache = _get_or_create_cache(db, server_id, mount_point, "filetypes")
+    ttl = timedelta(days=settings.ANALYSIS_CACHE_TTL_DAYS)
+    is_stale = (cache.collected_at is None) or (datetime.utcnow() - cache.collected_at > ttl)
+
+    if force:
+        server = db.query(Server).filter(Server.id == server_id).first()
+        if not server:
+            raise HTTPException(status_code=404, detail="Server not found")
+        try:
+            ssh = SSHClient(
+                host=server.host,
+                port=server.port,
+                username=server.username,
+                password=server.password,
+                private_key_path=server.private_key_path,
+            )
+            with ssh:
+                data = get_file_type_stats(ssh, mount_point)
+            cache.data_json = json.dumps(data, ensure_ascii=False)
+            cache.collected_at = datetime.utcnow()
+            cache.refreshing = False
+            cache.error = None
+            db.commit()
+            return {
+                "items": [FileTypeStats(**s) for s in data],
+                "collected_at": cache.collected_at,
+                "is_stale": False,
+                "refreshing": False,
+                "error": None,
+            }
+        except Exception as e:
+            cache.refreshing = False
+            cache.error = str(e)
+            db.commit()
+            raise HTTPException(status_code=500, detail=str(e))
+
+    if is_stale and not cache.refreshing:
+        cache.refreshing = True
+        cache.error = None
+        db.commit()
+        background_tasks.add_task(_refresh_analysis_cache, server_id, mount_point, "filetypes")
+
+    items = []
+    if cache.data_json:
+        try:
+            raw = json.loads(cache.data_json)
+            items = [FileTypeStats(**s) for s in raw]
+        except Exception:
+            items = []
+
+    return {
+        "items": items,
+        "collected_at": cache.collected_at,
+        "is_stale": is_stale,
+        "refreshing": bool(cache.refreshing),
+        "error": cache.error,
+    }
 
 
-@router.get("/largefiles/{server_id}/{mount_point:path}", response_model=List[LargeFileInfo])
+@router.get("/largefiles/{server_id}/{mount_point:path}", response_model=LargeFilesAnalysisResponse)
 def get_large_files(
     server_id: int,
     mount_point: str,
-    limit: int = Query(default=50, le=100),
+    background_tasks: BackgroundTasks,
+    force: bool = Query(default=False),
     db: Session = Depends(get_db)
 ):
-    """获取指定挂载点下最大的文件列表（实时获取）"""
     if not mount_point.startswith('/'):
         mount_point = '/' + mount_point
-    
-    server = db.query(Server).filter(Server.id == server_id).first()
-    if not server:
-        raise HTTPException(status_code=404, detail="Server not found")
-    
-    try:
-        ssh = SSHClient(
-            host=server.host,
-            port=server.port,
-            username=server.username,
-            password=server.password,
-            private_key_path=server.private_key_path,
-        )
-        
-        with ssh:
-            files = get_top_large_files(ssh, mount_point, limit)
-            return [LargeFileInfo(**f) for f in files]
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+
+    cache = _get_or_create_cache(db, server_id, mount_point, "largefiles")
+    ttl = timedelta(days=settings.ANALYSIS_CACHE_TTL_DAYS)
+    is_stale = (cache.collected_at is None) or (datetime.utcnow() - cache.collected_at > ttl)
+
+    if force:
+        server = db.query(Server).filter(Server.id == server_id).first()
+        if not server:
+            raise HTTPException(status_code=404, detail="Server not found")
+        try:
+            ssh = SSHClient(
+                host=server.host,
+                port=server.port,
+                username=server.username,
+                password=server.password,
+                private_key_path=server.private_key_path,
+            )
+            with ssh:
+                data = get_top_large_files(ssh, mount_point, 50)
+            cache.data_json = json.dumps(data, ensure_ascii=False)
+            cache.collected_at = datetime.utcnow()
+            cache.refreshing = False
+            cache.error = None
+            db.commit()
+            return {
+                "items": [LargeFileInfo(**f) for f in data],
+                "collected_at": cache.collected_at,
+                "is_stale": False,
+                "refreshing": False,
+                "error": None,
+            }
+        except Exception as e:
+            cache.refreshing = False
+            cache.error = str(e)
+            db.commit()
+            raise HTTPException(status_code=500, detail=str(e))
+
+    if is_stale and not cache.refreshing:
+        cache.refreshing = True
+        cache.error = None
+        db.commit()
+        background_tasks.add_task(_refresh_analysis_cache, server_id, mount_point, "largefiles")
+
+    items = []
+    if cache.data_json:
+        try:
+            raw = json.loads(cache.data_json)
+            items = [LargeFileInfo(**f) for f in raw]
+        except Exception:
+            items = []
+
+    return {
+        "items": items,
+        "collected_at": cache.collected_at,
+        "is_stale": is_stale,
+        "refreshing": bool(cache.refreshing),
+        "error": cache.error,
+    }

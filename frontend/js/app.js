@@ -32,6 +32,38 @@ function initNavigation() {
     });
 }
 
+function renderAnalysisMeta(meta, tabName) {
+    const collectedAt = meta.collected_at ? new Date(meta.collected_at).toLocaleString() : '无';
+    const staleText = meta.is_stale ? '（已过期）' : '';
+    const refreshingText = meta.refreshing ? '正在后台刷新...' : '';
+    const err = meta.error ? `错误: ${meta.error}` : '';
+    return `
+        <div class="analysis-meta">
+            <div class="analysis-meta-left">
+                <span>数据时间: ${collectedAt}${staleText}</span>
+                ${refreshingText ? `<span class="analysis-meta-refreshing">${refreshingText}</span>` : ''}
+                ${err ? `<span class="analysis-meta-error">${err}</span>` : ''}
+            </div>
+            <div class="analysis-meta-actions">
+                <button class="btn btn-sm btn-secondary" onclick="forceRefreshDetailTab('${tabName}')">🔄 强制刷新</button>
+            </div>
+        </div>
+    `;
+}
+
+async function forceRefreshDetailTab(tabName) {
+    if (!currentDetailServerId || !currentDetailMountPoint) return;
+    const content = document.getElementById('detail-content');
+    content.innerHTML = '<div class="loading">强制刷新中...（可能较慢）</div>';
+    if (tabName === 'filetypes') {
+        await loadFileTypesTab(true);
+    } else if (tabName === 'largefiles') {
+        await loadLargeFilesTab(true);
+    } else {
+        await loadDirectoriesTab();
+    }
+}
+
 function switchPage(pageName) {
     // 更新导航状态
     document.querySelectorAll('.nav-item').forEach(item => {
@@ -401,6 +433,8 @@ function closeModal() {
 // 存储当前查看的服务器和挂载点
 let currentDetailServerId = null;
 let currentDetailMountPoint = null;
+let currentDetailTab = 'directories';
+let detailPollTimer = null;
 
 async function showUserUsage(serverId, mountPoint) {
     const modal = document.getElementById('users-modal');
@@ -415,9 +449,9 @@ async function showUserUsage(serverId, mountPoint) {
     // 创建 Tab 结构
     list.innerHTML = `
         <div class="detail-tabs">
-            <button class="tab-btn active" onclick="switchDetailTab('directories')">📁 目录占用</button>
-            <button class="tab-btn" onclick="switchDetailTab('filetypes')">📊 文件类型</button>
-            <button class="tab-btn" onclick="switchDetailTab('largefiles')">📦 大文件 Top50</button>
+            <button class="tab-btn active" onclick="switchDetailTab(event, 'directories')">📁 目录占用</button>
+            <button class="tab-btn" onclick="switchDetailTab(event, 'filetypes')">📊 文件类型</button>
+            <button class="tab-btn" onclick="switchDetailTab(event, 'largefiles')">📦 大文件 Top50</button>
         </div>
         <div id="detail-content" class="detail-content">
             <div class="loading">加载中...</div>
@@ -429,12 +463,18 @@ async function showUserUsage(serverId, mountPoint) {
     await loadDirectoriesTab();
 }
 
-async function switchDetailTab(tabName) {
+async function switchDetailTab(e, tabName) {
+    if (detailPollTimer) {
+        clearTimeout(detailPollTimer);
+        detailPollTimer = null;
+    }
+    currentDetailTab = tabName;
+
     // 更新 Tab 按钮状态
     document.querySelectorAll('.tab-btn').forEach(btn => {
         btn.classList.remove('active');
     });
-    event.target.classList.add('active');
+    if (e && e.target) e.target.classList.add('active');
     
     const content = document.getElementById('detail-content');
     content.innerHTML = '<div class="loading">加载中...</div>';
@@ -490,18 +530,30 @@ async function loadDirectoriesTab() {
     }
 }
 
-async function loadFileTypesTab() {
+async function loadFileTypesTab(force = false) {
     const content = document.getElementById('detail-content');
     
     try {
-        const data = await api.getFileTypes(currentDetailServerId, currentDetailMountPoint);
+        const resp = await api.getFileTypes(currentDetailServerId, currentDetailMountPoint, force);
+        const data = resp.items || [];
         
+        const metaHtml = renderAnalysisMeta(resp, 'filetypes');
+
+        if (resp.refreshing && !force) {
+            detailPollTimer = setTimeout(() => {
+                if (currentDetailTab === 'filetypes' && currentDetailServerId && currentDetailMountPoint) {
+                    loadFileTypesTab(false);
+                }
+            }, 5000);
+        }
+
         if (data.length === 0) {
-            content.innerHTML = '<div class="empty-state"><p>暂无文件类型数据</p></div>';
+            content.innerHTML = metaHtml + '<div class="empty-state"><p>暂无文件类型数据（可能正在后台扫描）</p></div>';
             return;
         }
         
         content.innerHTML = `
+            ${metaHtml}
             <table class="users-table">
                 <thead>
                     <tr>
@@ -514,7 +566,7 @@ async function loadFileTypesTab() {
                 <tbody>
                     ${data.map(item => `
                         <tr>
-                            <td><span class="file-ext">.${item.extension}</span></td>
+                            <td><span class="file-ext">${item.extension === 'no_ext' ? '无扩展名' : '.' + item.extension}</span></td>
                             <td>${item.size_gb.toFixed(2)} GB</td>
                             <td>${item.file_count.toLocaleString()}</td>
                             <td>
@@ -533,18 +585,30 @@ async function loadFileTypesTab() {
     }
 }
 
-async function loadLargeFilesTab() {
+async function loadLargeFilesTab(force = false) {
     const content = document.getElementById('detail-content');
     
     try {
-        const data = await api.getLargeFiles(currentDetailServerId, currentDetailMountPoint, 50);
+        const resp = await api.getLargeFiles(currentDetailServerId, currentDetailMountPoint, 50, force);
+        const data = resp.items || [];
+
+        const metaHtml = renderAnalysisMeta(resp, 'largefiles');
+
+        if (resp.refreshing && !force) {
+            detailPollTimer = setTimeout(() => {
+                if (currentDetailTab === 'largefiles' && currentDetailServerId && currentDetailMountPoint) {
+                    loadLargeFilesTab(false);
+                }
+            }, 5000);
+        }
         
         if (data.length === 0) {
-            content.innerHTML = '<div class="empty-state"><p>暂无大文件数据</p></div>';
+            content.innerHTML = metaHtml + '<div class="empty-state"><p>暂无大文件数据（可能正在后台扫描）</p></div>';
             return;
         }
         
         content.innerHTML = `
+            ${metaHtml}
             <table class="users-table large-files-table">
                 <thead>
                     <tr>
@@ -580,8 +644,13 @@ async function loadLargeFilesTab() {
 
 function closeUsersModal() {
     document.getElementById('users-modal').classList.add('hidden');
+    if (detailPollTimer) {
+        clearTimeout(detailPollTimer);
+        detailPollTimer = null;
+    }
     currentDetailServerId = null;
     currentDetailMountPoint = null;
+    currentDetailTab = 'directories';
 }
 
 // ===== 趋势分析 =====

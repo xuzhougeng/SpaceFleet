@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey, Text
+from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey, Text, Boolean, UniqueConstraint
 from sqlalchemy.orm import relationship
 
 from app.database import Base
@@ -61,3 +61,22 @@ class UserDiskUsage(Base):
     
     # Relationships
     server = relationship("Server", back_populates="user_disk_usages")
+
+
+class AnalysisCache(Base):
+    """耗时统计缓存（文件类型/大文件 TopN）"""
+
+    __tablename__ = "analysis_cache"
+    __table_args__ = (
+        UniqueConstraint("server_id", "mount_point", "kind", name="uq_analysis_cache"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    server_id = Column(Integer, ForeignKey("servers.id"), nullable=False, index=True)
+    mount_point = Column(String(255), nullable=False)
+    kind = Column(String(50), nullable=False)  # filetypes / largefiles
+    data_json = Column(Text, nullable=True)
+    collected_at = Column(DateTime, nullable=True, index=True)
+    refreshing = Column(Boolean, default=False)
+    error = Column(Text, nullable=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

@@ -130,17 +130,21 @@ const api = {
     /**
      * 获取文件类型统计
      */
-    async getFileTypes(serverId, mountPoint) {
+    async getFileTypes(serverId, mountPoint, force = false) {
         const mount = mountPoint.startsWith('/') ? mountPoint.slice(1) : mountPoint;
-        return this.request(`/disks/filetypes/${serverId}/${mount}`);
+        const qs = force ? '?force=true' : '';
+        return this.request(`/disks/filetypes/${serverId}/${mount}${qs}`);
     },
 
     /**
      * 获取最大文件列表
      */
-    async getLargeFiles(serverId, mountPoint, limit = 50) {
+    async getLargeFiles(serverId, mountPoint, limit = 50, force = false) {
         const mount = mountPoint.startsWith('/') ? mountPoint.slice(1) : mountPoint;
-        return this.request(`/disks/largefiles/${serverId}/${mount}?limit=${limit}`);
+        const qs = new URLSearchParams();
+        qs.set('limit', limit);
+        if (force) qs.set('force', 'true');
+        return this.request(`/disks/largefiles/${serverId}/${mount}?${qs.toString()}`);
     },
 
     /**

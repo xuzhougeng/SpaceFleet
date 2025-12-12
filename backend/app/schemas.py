@@ -139,3 +139,18 @@ class LargeFileInfo(BaseModel):
     size_gb: float
     owner: str
     modified: str
+
+
+class AnalysisResponseBase(BaseModel):
+    collected_at: Optional[datetime] = None
+    is_stale: bool
+    refreshing: bool
+    error: Optional[str] = None
+
+
+class FileTypeAnalysisResponse(AnalysisResponseBase):
+    items: List[FileTypeStats]
+
+
+class LargeFilesAnalysisResponse(AnalysisResponseBase):
+    items: List[LargeFileInfo]

@@ -54,7 +54,7 @@ class SSHClient:
             self._client.close()
             self._client = None
     
-    def execute(self, command: str) -> Tuple[str, str, int]:
+    def execute(self, command: str, timeout: int = 300) -> Tuple[str, str, int]:
         """
         执行远程命令
         
@@ -64,7 +64,7 @@ class SSHClient:
         if not self._client:
             raise RuntimeError("SSH client not connected")
         
-        stdin, stdout, stderr = self._client.exec_command(command, timeout=300)
+        stdin, stdout, stderr = self._client.exec_command(command, timeout=timeout)
         exit_code = stdout.channel.recv_exit_status()
         
         return (

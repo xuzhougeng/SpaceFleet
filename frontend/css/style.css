@@ -513,6 +513,41 @@ body {
     overflow-y: auto;
 }
 
+.analysis-meta {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 12px;
+    margin-bottom: 12px;
+    background-color: #f8fafc;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+}
+
+.analysis-meta-left {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    align-items: center;
+}
+
+.analysis-meta-refreshing {
+    color: var(--warning-color);
+    font-weight: 600;
+}
+
+.analysis-meta-error {
+    color: var(--danger-color);
+    font-weight: 600;
+}
+
+.analysis-meta-actions {
+    flex-shrink: 0;
+}
+
 /* ===== 文件类型样式 ===== */
 .file-ext {
     display: inline-block;

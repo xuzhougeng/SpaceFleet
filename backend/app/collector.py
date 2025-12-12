@@ -266,9 +266,7 @@ def get_file_type_stats(ssh: SSHClient, mount_point: str) -> List[Dict[str, Any]
     Returns:
         按大小降序排列的文件类型统计列表
     """
-    # 使用 find 和 awk 统计各扩展名占用的空间
-    # 限制深度避免过长执行时间
-    cmd = f"""find {mount_point} -maxdepth 5 -type f -printf '%s %f\\n' 2>/dev/null | \\
+    cmd = f"""find {mount_point} -xdev -type f -printf '%s %f\\n' 2>/dev/null | \\
 awk '{{
     size = $1
     fname = $2
@@ -283,41 +281,38 @@ awk '{{
     counts[ext]++
 }}
 END {{
+    total = 0
     for (ext in sizes) {{
-        printf "%s\\t%d\\t%d\\n", ext, sizes[ext], counts[ext]
+        total += sizes[ext]
+    }}
+    for (ext in sizes) {{
+        printf "%s\\t%d\\t%d\\t%d\\n", ext, sizes[ext], counts[ext], total
     }}
 }}' | sort -t$'\\t' -k2 -rn | head -20"""
     
-    stdout, stderr, code = ssh.execute(cmd)
+    stdout, stderr, code = ssh.execute(cmd, timeout=3600)
     
     if not stdout.strip():
         return []
     
     results = []
-    total_size = 0
-    
-    # 先计算总大小
+    total_size = None
     lines = stdout.strip().split('\n')
-    for line in lines:
-        parts = line.split('\t')
-        if len(parts) >= 2:
-            try:
-                total_size += int(parts[1])
-            except ValueError:
-                continue
     
     # 解析各类型
     for line in lines:
         parts = line.split('\t')
-        if len(parts) < 3:
+        if len(parts) < 4:
             continue
         
         try:
             ext = parts[0]
             size_bytes = int(parts[1])
             count = int(parts[2])
+            if total_size is None:
+                total_size = int(parts[3])
             size_gb = size_bytes / (1024 * 1024 * 1024)
-            percent = (size_bytes / total_size * 100) if total_size > 0 else 0
+            percent = (size_bytes / total_size * 100) if total_size and total_size > 0 else 0
             
             results.append({
                 'extension': ext,
@@ -343,11 +338,20 @@ def get_top_large_files(ssh: SSHClient, mount_point: str, limit: int = 50) -> Li
     Returns:
         按大小降序排列的文件列表
     """
-    # 使用 find 查找大文件并排序
-    cmd = f"""find {mount_point} -maxdepth 6 -type f -printf '%s\\t%u\\t%T+\\t%p\\n' 2>/dev/null | \\
-sort -t$'\\t' -k1 -rn | head -{limit}"""
+    cmd = f"""find {mount_point} -xdev -type f -printf '%s\\t%u\\t%T+\\t%p\\n' 2>/dev/null | \\
+awk -v N={limit} 'BEGIN{{for(i=1;i<=N;i++){{s[i]=-1;line[i]=""}}}} {{
+    size=$1
+    for(i=1;i<=N;i++){{
+        if(size>s[i]){{
+            for(j=N;j>i;j--){{s[j]=s[j-1];line[j]=line[j-1]}}
+            s[i]=size
+            line[i]=$0
+            break
+        }}
+    }}
+}} END{{for(i=1;i<=N;i++){{if(s[i]>=0) print line[i]}}}}'"""
     
-    stdout, stderr, code = ssh.execute(cmd)
+    stdout, stderr, code = ssh.execute(cmd, timeout=3600)
     
     if not stdout.strip():
         return []

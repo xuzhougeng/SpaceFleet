@@ -12,6 +12,8 @@ class Settings(BaseSettings):
     # Scheduler settings
     COLLECTION_HOUR: int = 2  # Run daily at 2:00 AM
     COLLECTION_MINUTE: int = 0
+
+    ANALYSIS_CACHE_TTL_DAYS: int = 7
     
     class Config:
         env_file = ".env"
