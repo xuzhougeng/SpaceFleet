@@ -1,0 +1,69 @@
+import warnings
+from contextlib import asynccontextmanager
+from pathlib import Path
+from fastapi import FastAPI
+
+# 过滤 paramiko 的 TripleDES 弃用警告
+warnings.filterwarnings("ignore", message=".*TripleDES.*")
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+
+from app.database import engine, Base
+from app.routers import servers, disks
+from app.scheduler import start_scheduler, stop_scheduler
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """应用生命周期管理"""
+    # Startup
+    Base.metadata.create_all(bind=engine)
+    start_scheduler()
+    yield
+    # Shutdown
+    stop_scheduler()
+
+
+app = FastAPI(
+    title="Space Manager",
+    description="多服务器磁盘空间管理工具",
+    version="1.0.0",
+    lifespan=lifespan,
+)
+
+# CORS 配置
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# 注册路由
+app.include_router(servers.router, prefix="/api")
+app.include_router(disks.router, prefix="/api")
+
+# 静态文件目录
+FRONTEND_DIR = Path(__file__).parent.parent.parent / "frontend"
+
+# 挂载静态资源目录
+if (FRONTEND_DIR / "css").exists():
+    app.mount("/css", StaticFiles(directory=FRONTEND_DIR / "css"), name="css")
+if (FRONTEND_DIR / "js").exists():
+    app.mount("/js", StaticFiles(directory=FRONTEND_DIR / "js"), name="js")
+
+
+@app.get("/")
+def root():
+    """返回前端首页"""
+    index_file = FRONTEND_DIR / "index.html"
+    if index_file.exists():
+        return FileResponse(index_file)
+    return {"message": "Space Manager API", "version": "1.0.0"}
+
+
+@app.get("/api/health")
+def health_check():
+    return {"status": "healthy"}

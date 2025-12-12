@@ -1,0 +1,209 @@
+from datetime import datetime, timedelta
+from typing import List, Optional
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy.orm import Session
+from sqlalchemy import func, desc
+
+from app.database import get_db
+from app.models import Server, DiskUsage, UserDiskUsage
+from app.schemas import (
+    DiskUsageResponse, 
+    UserDiskUsageResponse,
+    DiskSummary,
+    ServerDiskSummary,
+    DiskTrend,
+    UserUsageSummary,
+)
+from app.config import settings
+from app.collector import collect_server_data, collect_all_servers
+
+router = APIRouter(prefix="/disks", tags=["disks"])
+
+
+@router.get("/summary", response_model=List[DiskSummary])
+def get_disk_summary(db: Session = Depends(get_db)):
+    """
+    获取所有服务器磁盘概览（最新数据）
+    """
+    # 获取每个服务器每个挂载点的最新记录
+    subquery = (
+        db.query(
+            DiskUsage.server_id,
+            DiskUsage.mount_point,
+            func.max(DiskUsage.collected_at).label('latest')
+        )
+        .group_by(DiskUsage.server_id, DiskUsage.mount_point)
+        .subquery()
+    )
+    
+    latest_disks = (
+        db.query(DiskUsage, Server.name)
+        .join(Server)
+        .join(
+            subquery,
+            (DiskUsage.server_id == subquery.c.server_id) &
+            (DiskUsage.mount_point == subquery.c.mount_point) &
+            (DiskUsage.collected_at == subquery.c.latest)
+        )
+        .all()
+    )
+    
+    result = []
+    for disk, server_name in latest_disks:
+        result.append(DiskSummary(
+            server_name=server_name,
+            server_id=disk.server_id,
+            mount_point=disk.mount_point,
+            total_gb=disk.total_gb,
+            used_gb=disk.used_gb,
+            free_gb=disk.free_gb,
+            use_percent=disk.use_percent,
+            is_alert=disk.use_percent >= settings.ALERT_THRESHOLD_PERCENT,
+        ))
+    
+    # 按使用率降序排列，告警优先
+    result.sort(key=lambda x: (-x.is_alert, -x.use_percent))
+    return result
+
+
+@router.get("/alerts", response_model=List[DiskSummary])
+def get_disk_alerts(db: Session = Depends(get_db)):
+    """获取超过告警阈值的磁盘"""
+    summary = get_disk_summary(db)
+    return [d for d in summary if d.is_alert]
+
+
+@router.get("/server/{server_id}", response_model=List[DiskUsageResponse])
+def get_server_disks(
+    server_id: int,
+    limit: int = Query(default=100, le=1000),
+    db: Session = Depends(get_db)
+):
+    """获取指定服务器的磁盘历史数据"""
+    server = db.query(Server).filter(Server.id == server_id).first()
+    if not server:
+        raise HTTPException(status_code=404, detail="Server not found")
+    
+    disks = (
+        db.query(DiskUsage)
+        .filter(DiskUsage.server_id == server_id)
+        .order_by(desc(DiskUsage.collected_at))
+        .limit(limit)
+        .all()
+    )
+    return disks
+
+
+@router.get("/trend/{server_id}/{mount_point:path}", response_model=List[DiskTrend])
+def get_disk_trend(
+    server_id: int,
+    mount_point: str,
+    days: int = Query(default=30, le=365),
+    db: Session = Depends(get_db)
+):
+    """获取指定磁盘的趋势数据"""
+    since = datetime.utcnow() - timedelta(days=days)
+    
+    # mount_point 需要加上前导斜杠
+    if not mount_point.startswith('/'):
+        mount_point = '/' + mount_point
+    
+    records = (
+        db.query(DiskUsage)
+        .filter(
+            DiskUsage.server_id == server_id,
+            DiskUsage.mount_point == mount_point,
+            DiskUsage.collected_at >= since
+        )
+        .order_by(DiskUsage.collected_at)
+        .all()
+    )
+    
+    return [
+        DiskTrend(
+            date=r.collected_at,
+            use_percent=r.use_percent,
+            used_gb=r.used_gb,
+        )
+        for r in records
+    ]
+
+
+@router.get("/users/{server_id}/{mount_point:path}", response_model=List[UserUsageSummary])
+def get_user_usage(
+    server_id: int,
+    mount_point: str,
+    db: Session = Depends(get_db)
+):
+    """获取指定挂载点下各目录/用户的空间占用（最新数据）"""
+    if not mount_point.startswith('/'):
+        mount_point = '/' + mount_point
+    
+    # 获取最新的采集时间
+    latest = (
+        db.query(func.max(UserDiskUsage.collected_at))
+        .filter(
+            UserDiskUsage.server_id == server_id,
+            UserDiskUsage.mount_point == mount_point
+        )
+        .scalar()
+    )
+    
+    if not latest:
+        return []
+    
+    # 获取该时间点的数据
+    records = (
+        db.query(UserDiskUsage)
+        .filter(
+            UserDiskUsage.server_id == server_id,
+            UserDiskUsage.mount_point == mount_point,
+            UserDiskUsage.collected_at == latest
+        )
+        .order_by(desc(UserDiskUsage.used_gb))
+        .all()
+    )
+    
+    # 获取磁盘总大小以计算百分比
+    disk = (
+        db.query(DiskUsage)
+        .filter(
+            DiskUsage.server_id == server_id,
+            DiskUsage.mount_point == mount_point
+        )
+        .order_by(desc(DiskUsage.collected_at))
+        .first()
+    )
+    
+    total_gb = disk.total_gb if disk else 1
+    
+    return [
+        UserUsageSummary(
+            directory=r.directory,
+            owner=r.owner,
+            used_gb=r.used_gb,
+            percent_of_disk=round(r.used_gb / total_gb * 100, 2),
+        )
+        for r in records
+    ]
+
+
+@router.post("/collect")
+def trigger_collection(
+    server_id: Optional[int] = None,
+    db: Session = Depends(get_db)
+):
+    """
+    手动触发数据采集
+    - 不指定 server_id: 采集所有服务器
+    - 指定 server_id: 只采集该服务器
+    """
+    if server_id:
+        server = db.query(Server).filter(Server.id == server_id).first()
+        if not server:
+            raise HTTPException(status_code=404, detail="Server not found")
+        result = collect_server_data(db, server)
+        return {"results": [result]}
+    else:
+        results = collect_all_servers(db)
+        return {"results": results}

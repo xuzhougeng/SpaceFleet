@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Space Manager - 磁盘空间管理</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <div class="app">
+        <!-- 侧边栏导航 -->
+        <nav class="sidebar">
+            <div class="logo">
+                <h1>💾 Space Manager</h1>
+            </div>
+            <ul class="nav-menu">
+                <li class="nav-item active" data-page="dashboard">
+                    <span class="icon">📊</span>
+                    <span>仪表盘</span>
+                </li>
+                <li class="nav-item" data-page="servers">
+                    <span class="icon">🖥️</span>
+                    <span>服务器管理</span>
+                </li>
+                <li class="nav-item" data-page="trends">
+                    <span class="icon">📈</span>
+                    <span>趋势分析</span>
+                </li>
+            </ul>
+        </nav>
+
+        <!-- 主内容区 -->
+        <main class="main-content">
+            <!-- 仪表盘页面 -->
+            <section id="page-dashboard" class="page active">
+                <header class="page-header">
+                    <h2>磁盘概览</h2>
+                    <button class="btn btn-primary" onclick="collectAllData()">
+                        🔄 采集所有数据
+                    </button>
+                </header>
+                
+                <!-- 告警区域 -->
+                <div id="alerts-section" class="alerts-section hidden">
+                    <h3>⚠️ 磁盘告警</h3>
+                    <div id="alerts-list" class="alerts-list"></div>
+                </div>
+                
+                <!-- 磁盘卡片 -->
+                <div id="disk-cards" class="disk-cards"></div>
+            </section>
+
+            <!-- 服务器管理页面 -->
+            <section id="page-servers" class="page">
+                <header class="page-header">
+                    <h2>服务器管理</h2>
+                    <button class="btn btn-primary" onclick="showAddServerModal()">
+                        ➕ 添加服务器
+                    </button>
+                </header>
+                <div id="servers-list" class="servers-list"></div>
+            </section>
+
+            <!-- 趋势分析页面 -->
+            <section id="page-trends" class="page">
+                <header class="page-header">
+                    <h2>趋势分析</h2>
+                </header>
+                <div class="trend-controls">
+                    <select id="trend-server" onchange="loadMountPoints()">
+                        <option value="">选择服务器</option>
+                    </select>
+                    <select id="trend-mount" onchange="loadTrendData()">
+                        <option value="">选择挂载点</option>
+                    </select>
+                    <select id="trend-days" onchange="loadTrendData()">
+                        <option value="7">最近 7 天</option>
+                        <option value="30" selected>最近 30 天</option>
+                        <option value="90">最近 90 天</option>
+                    </select>
+                </div>
+                <div id="trend-chart" class="trend-chart">
+                    <canvas id="chart-canvas"></canvas>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <!-- 添加/编辑服务器模态框 -->
+    <div id="server-modal" class="modal hidden">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="modal-title">添加服务器</h3>
+                <button class="btn-close" onclick="closeModal()">&times;</button>
+            </div>
+            <form id="server-form" onsubmit="saveServer(event)">
+                <input type="hidden" id="server-id">
+                <div class="form-group">
+                    <label for="server-name">服务器名称 *</label>
+                    <input type="text" id="server-name" required placeholder="例如: 生产服务器1">
+                </div>
+                <div class="form-group">
+                    <label for="server-host">主机地址 *</label>
+                    <input type="text" id="server-host" required placeholder="IP 或域名">
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="server-port">SSH 端口</label>
+                        <input type="number" id="server-port" value="22">
+                    </div>
+                    <div class="form-group">
+                        <label for="server-username">用户名 *</label>
+                        <input type="text" id="server-username" required placeholder="SSH 用户名">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label for="server-password">密码</label>
+                    <input type="password" id="server-password" placeholder="SSH 密码（可选）">
+                </div>
+                <div class="form-group">
+                    <label for="server-keypath">私钥路径</label>
+                    <input type="text" id="server-keypath" placeholder="例如: ~/.ssh/id_rsa">
+                </div>
+                <div class="form-group">
+                    <label for="server-description">描述</label>
+                    <textarea id="server-description" rows="2" placeholder="服务器描述（可选）"></textarea>
+                </div>
+                <div class="form-group">
+                    <label for="server-scanmounts">扫描磁盘</label>
+                    <input type="text" id="server-scanmounts" placeholder="例如: /data,/home（留空扫描所有）">
+                    <small class="form-hint">指定要监控的挂载点，多个用逗号分隔，留空表示扫描所有磁盘</small>
+                </div>
+                <div class="form-actions">
+                    <button type="button" class="btn btn-secondary" onclick="closeModal()">取消</button>
+                    <button type="submit" class="btn btn-primary">保存</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- 用户空间详情模态框 -->
+    <div id="users-modal" class="modal hidden">
+        <div class="modal-content modal-large">
+            <div class="modal-header">
+                <h3 id="users-modal-title">目录空间详情</h3>
+                <button class="btn-close" onclick="closeUsersModal()">&times;</button>
+            </div>
+            <div id="users-list" class="users-list"></div>
+        </div>
+    </div>
+
+    <!-- Toast 通知 -->
+    <div id="toast" class="toast hidden"></div>
+
+    <script src="js/api.js"></script>
+    <script src="js/chart.js"></script>
+    <script src="js/app.js"></script>
+</body>
+</html>
