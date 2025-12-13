@@ -1,4 +1,4 @@
-# Space Manager - 多服务器磁盘空间管理工具
+# SpaceFleet - 多服务器磁盘空间管理工具
 
 ## 项目概述
 
@@ -175,8 +175,56 @@ uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 1. 打开 http://localhost:8000
 2. 进入 **服务器管理** 添加要监控的服务器
 3. 点击 **测试连接** 验证 SSH 配置
+4. （可选）如需避免权限不足导致扫描不全，勾选 **使用 sudo 扫描**，并点击 **测试 sudo**
 4. 点击 **采集数据** 或等待每日自动采集
 5. 返回 **仪表盘** 查看磁盘概览和趋势
+
+---
+
+## 使用 sudo 扫描（解决权限不足）
+
+当你在服务器管理中勾选 **使用 sudo 扫描** 时，后端会通过 SSH 在远端执行类似命令：
+
+```bash
+sudo -n bash -lc "<实际扫描命令>"
+```
+
+其中 `-n` 表示 **非交互**：
+- 如果需要输入密码，会立刻失败，不会卡住等待输入。
+
+### 现象：sudo 测试失败
+
+如果你看到类似提示：
+
+```
+sudo: a password is required
+```
+
+说明目标服务器上该 SSH 用户 **没有配置免密 sudo（NOPASSWD）**，或者该用户没有 sudo 权限。
+
+### 解决：配置免密 sudo（推荐用 visudo）
+
+1. 登录到目标服务器（需要具备 sudo 管理权限的账号）
+2. 使用 `visudo` 编辑 sudoers（避免语法错误导致 sudo 不可用）：
+
+```bash
+sudo visudo
+```
+
+3. 追加一条规则（将 `YOUR_USER` 替换为你在 Space Manager 中填写的 SSH 用户名）：
+
+```text
+YOUR_USER ALL=(ALL) NOPASSWD: /usr/bin/du, /usr/bin/find, /usr/bin/stat, /bin/df, /bin/bash, /usr/bin/awk, /usr/bin/sort, /usr/bin/head
+```
+
+4. 保存退出后，在 Space Manager 中点击 **测试 sudo**，应显示 `✅ 可用`。
+
+### 安全建议
+
+`NOPASSWD` 会提升权限，建议遵循最小授权：
+- 只给需要的用户配置
+- 尽量只允许必要命令（上面示例已经做了命令白名单）
+- 如你的服务器命令路径不同（例如 `du/find` 在 `/bin`），请用 `which du` / `which find` 查到实际路径并替换
 
 ---
 
