@@ -28,6 +28,7 @@ class Server(Base):
     # Relationships
     disk_usages = relationship("DiskUsage", back_populates="server", cascade="all, delete-orphan")
     user_disk_usages = relationship("UserDiskUsage", back_populates="server", cascade="all, delete-orphan")
+    server_metrics = relationship("ServerMetrics", back_populates="server", cascade="all, delete-orphan")
 
 
 class DiskUsage(Base):
@@ -63,6 +64,25 @@ class UserDiskUsage(Base):
     
     # Relationships
     server = relationship("Server", back_populates="user_disk_usages")
+
+
+class ServerMetrics(Base):
+    """服务器性能指标（CPU、内存、GPU）"""
+    __tablename__ = "server_metrics"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    server_id = Column(Integer, ForeignKey("servers.id"), nullable=False, index=True)
+    cpu_percent = Column(Float, nullable=False)  # CPU 使用率百分比
+    memory_total_gb = Column(Float, nullable=False)  # 总内存 GB
+    memory_used_gb = Column(Float, nullable=False)  # 已使用内存 GB
+    memory_free_gb = Column(Float, nullable=False)  # 空闲内存 GB
+    memory_percent = Column(Float, nullable=False)  # 内存使用率百分比
+    # GPU 信息（JSON格式存储多块GPU）
+    gpu_info = Column(Text, nullable=True)  # JSON: [{name, index, memory_total_mb, memory_used_mb, memory_percent, gpu_util_percent, temperature}]
+    collected_at = Column(DateTime, default=datetime.utcnow, index=True)
+    
+    # Relationships
+    server = relationship("Server", back_populates="server_metrics")
 
 
 class AnalysisCache(Base):

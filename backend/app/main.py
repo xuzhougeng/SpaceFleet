@@ -26,6 +26,10 @@ def _ensure_sqlite_schema():
         if "sudoer" not in cols:
             conn.execute(text("ALTER TABLE servers ADD COLUMN sudoer INTEGER DEFAULT 0"))
             conn.execute(text("UPDATE servers SET sudoer=0 WHERE sudoer IS NULL"))
+        # server_metrics.gpu_info 列兼容处理
+        sm_cols = [row[1] for row in conn.execute(text("PRAGMA table_info(server_metrics)")).fetchall()]
+        if "gpu_info" not in sm_cols:
+            conn.execute(text("ALTER TABLE server_metrics ADD COLUMN gpu_info TEXT"))
 
 
 @asynccontextmanager

@@ -18,6 +18,10 @@
                     <span class="icon">📊</span>
                     <span>仪表盘</span>
                 </li>
+                <li class="nav-item" data-page="disks">
+                    <span class="icon">💾</span>
+                    <span>磁盘</span>
+                </li>
                 <li class="nav-item" data-page="servers">
                     <span class="icon">🖥️</span>
                     <span>服务器管理</span>
@@ -34,18 +38,31 @@
             <!-- 仪表盘页面 -->
             <section id="page-dashboard" class="page active">
                 <header class="page-header">
+                    <h2>服务器监控</h2>
+                    <button class="btn btn-primary" onclick="loadDashboard()">
+                        🔄 立即刷新
+                    </button>
+                </header>
+                
+                <!-- 服务器指标卡片 -->
+                <div id="metrics-cards" class="metrics-cards"></div>
+            </section>
+
+            <!-- 磁盘页面 -->
+            <section id="page-disks" class="page">
+                <header class="page-header">
                     <h2>磁盘概览</h2>
                     <button class="btn btn-primary" onclick="collectAllData()">
                         🔄 采集所有数据
                     </button>
                 </header>
-                
+
                 <!-- 告警区域 -->
                 <div id="alerts-section" class="alerts-section hidden">
                     <h3>⚠️ 磁盘告警</h3>
                     <div id="alerts-list" class="alerts-list"></div>
                 </div>
-                
+
                 <!-- 磁盘卡片 -->
                 <div id="disk-cards" class="disk-cards"></div>
             </section>

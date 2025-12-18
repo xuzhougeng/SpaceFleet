@@ -5,7 +5,7 @@ import shlex
 from sqlalchemy.orm import Session
 
 from app.ssh_client import SSHClient
-from app.models import Server, DiskUsage, UserDiskUsage
+from app.models import Server, DiskUsage, UserDiskUsage, ServerMetrics
 from app.config import settings
 
 
@@ -173,6 +173,173 @@ def collect_user_usage(ssh: SSHClient, mount_point: str, use_sudo: bool = False)
     return users
 
 
+def collect_gpu_info(ssh: SSHClient, use_sudo: bool = False) -> List[Dict[str, Any]]:
+    """
+    采集GPU使用情况（使用nvidia-smi）
+    
+    Returns:
+        GPU信息列表，每个元素包含:
+        {
+            'index': int,
+            'name': str,
+            'memory_total_mb': float,
+            'memory_used_mb': float,
+            'memory_percent': float,
+            'gpu_util_percent': float,
+            'temperature': float,
+        }
+        如果没有GPU或nvidia-smi不可用，返回空列表
+    """
+    # 使用nvidia-smi查询GPU信息
+    # --query-gpu: index,name,memory.total,memory.used,utilization.gpu,temperature.gpu
+    # --format=csv,noheader,nounits
+    base_cmd = "--query-gpu=index,name,memory.total,memory.used,utilization.gpu,temperature.gpu --format=csv,noheader,nounits"
+    gpu_cmds = [
+        f"bash -lc \"nvidia-smi {base_cmd} 2>/dev/null\"",
+        f"/usr/bin/nvidia-smi {base_cmd} 2>/dev/null",
+        f"/usr/local/nvidia/bin/nvidia-smi {base_cmd} 2>/dev/null",
+        f"nvidia-smi {base_cmd} 2>/dev/null",
+    ]
+
+    gpu_stdout = ""
+    for cmd in gpu_cmds:
+        out, _, code = ssh.execute(_wrap_sudo(cmd, use_sudo))
+        if code == 0 and out.strip():
+            gpu_stdout = out
+            break
+
+    if not gpu_stdout.strip():
+        return []
+    
+    gpus = []
+    for line in gpu_stdout.strip().split('\n'):
+        parts = [p.strip() for p in line.split(',')]
+        if len(parts) < 6:
+            continue
+        
+        try:
+            index = int(parts[0])
+            name = parts[1]
+            memory_total_mb = float(parts[2])
+            memory_used_mb = float(parts[3])
+            gpu_util_percent = float(parts[4])
+            temperature = float(parts[5])
+            
+            memory_percent = (memory_used_mb / memory_total_mb * 100) if memory_total_mb > 0 else 0.0
+            
+            gpus.append({
+                'index': index,
+                'name': name,
+                'memory_total_mb': round(memory_total_mb, 0),
+                'memory_used_mb': round(memory_used_mb, 0),
+                'memory_percent': round(memory_percent, 2),
+                'gpu_util_percent': round(gpu_util_percent, 2),
+                'temperature': round(temperature, 1),
+            })
+        except (ValueError, IndexError):
+            continue
+    
+    return gpus
+
+
+def collect_server_metrics(ssh: SSHClient, use_sudo: bool = False) -> Dict[str, Any]:
+    """
+    采集服务器CPU、内存和GPU使用情况
+    
+    Returns:
+        {
+            'cpu_percent': float,
+            'memory_total_gb': float,
+            'memory_used_gb': float,
+            'memory_free_gb': float,
+            'memory_percent': float,
+            'gpu_info': list,  # GPU信息列表
+        }
+    """
+    # CPU使用率：基于 /proc/stat 两次采样（与 top 输出格式/语言无关，更稳定）
+    # 公式：cpu% = (delta_total - delta_idle) / delta_total * 100
+    cpu_cmd = (
+        "sh -lc '"
+        "read cpu u n s i w irq si st rest < /proc/stat; "
+        "t1=$((u+n+s+i+w+irq+si+st)); idle1=$((i+w)); "
+        "sleep 1; "
+        "read cpu u n s i w irq si st rest < /proc/stat; "
+        "t2=$((u+n+s+i+w+irq+si+st)); idle2=$((i+w)); "
+        "dt=$((t2-t1)); didle=$((idle2-idle1)); "
+        "if [ \"$dt\" -gt 0 ]; then "
+        "awk -v dt=\"$dt\" -v didle=\"$didle\" \"BEGIN{printf \\\"%.2f\\\\n\\\", (dt-didle)*100/dt}\"; "
+        "else echo 0.00; fi"
+        "'"
+    )
+    cpu_stdout, _, cpu_code = ssh.execute(_wrap_sudo(cpu_cmd, use_sudo))
+
+    if cpu_code == 0 and (cpu_stdout or "").strip():
+        try:
+            cpu_percent = float(cpu_stdout.strip())
+            if cpu_percent < 0 or cpu_percent > 100:
+                cpu_percent = 0.0
+        except (ValueError, AttributeError):
+            cpu_percent = 0.0
+    else:
+        # 备用方法：vmstat（部分系统可能未安装）
+        cpu_cmd2 = "vmstat 1 2 | tail -1 | awk '{print 100-$15}'"
+        cpu_stdout2, _, cpu_code2 = ssh.execute(_wrap_sudo(cpu_cmd2, use_sudo))
+        if cpu_code2 == 0 and (cpu_stdout2 or "").strip():
+            try:
+                cpu_percent = float(cpu_stdout2.strip())
+                if cpu_percent < 0 or cpu_percent > 100:
+                    cpu_percent = 0.0
+            except (ValueError, AttributeError):
+                cpu_percent = 0.0
+        else:
+            cpu_percent = 0.0
+    
+    # 内存信息：使用 free -b（字节，精度更高；-g 会做整数 GiB 取整）
+    mem_cmd = "free -b"
+    mem_stdout, _, mem_code = ssh.execute(_wrap_sudo(mem_cmd, use_sudo))
+    
+    if mem_code != 0:
+        raise RuntimeError(f"Failed to collect memory info: exit code {mem_code}")
+    
+    # 解析free输出
+    # Mem:    total   used   free   shared  buff/cache   available
+    mem_lines = mem_stdout.strip().split('\n')
+    if len(mem_lines) < 2:
+        raise RuntimeError("Failed to parse memory info")
+    
+    mem_parts = mem_lines[1].split()
+    if len(mem_parts) < 3:
+        raise RuntimeError("Failed to parse memory info")
+    
+    try:
+        total_b = float(mem_parts[1])
+        used_b = float(mem_parts[2])
+        free_b = float(mem_parts[3]) if len(mem_parts) > 3 else max(total_b - used_b, 0)
+
+        gb = 1024 * 1024 * 1024
+        memory_total_gb = total_b / gb
+        memory_used_gb = used_b / gb
+        memory_free_gb = free_b / gb
+        memory_percent = (memory_used_gb / memory_total_gb * 100) if memory_total_gb > 0 else 0.0
+    except (ValueError, IndexError) as e:
+        raise RuntimeError(f"Failed to parse memory values: {e}")
+    
+    # 采集GPU信息（可选，失败不影响其他指标）
+    try:
+        gpu_info = collect_gpu_info(ssh, use_sudo)
+    except Exception:
+        gpu_info = []
+    
+    return {
+        'cpu_percent': round(cpu_percent, 2),
+        'memory_total_gb': round(memory_total_gb, 2),
+        'memory_used_gb': round(memory_used_gb, 2),
+        'memory_free_gb': round(memory_free_gb, 2),
+        'memory_percent': round(memory_percent, 2),
+        'gpu_info': gpu_info,
+    }
+
+
 def collect_server_data(db: Session, server: Server) -> Dict[str, Any]:
     """
     采集单个服务器的磁盘数据并存入数据库
@@ -205,6 +372,25 @@ def collect_server_data(db: Session, server: Server) -> Dict[str, Any]:
             scan_mounts = None
             if server.scan_mounts:
                 scan_mounts = [m.strip() for m in server.scan_mounts.split(',') if m.strip()]
+            
+            # 采集CPU和内存使用情况
+            try:
+                metrics = collect_server_metrics(ssh, use_sudo=use_sudo)
+                import json as _json
+                server_metric = ServerMetrics(
+                    server_id=server.id,
+                    cpu_percent=metrics['cpu_percent'],
+                    memory_total_gb=metrics['memory_total_gb'],
+                    memory_used_gb=metrics['memory_used_gb'],
+                    memory_free_gb=metrics['memory_free_gb'],
+                    memory_percent=metrics['memory_percent'],
+                    gpu_info=_json.dumps(metrics.get('gpu_info', []), ensure_ascii=False) if metrics.get('gpu_info') else None,
+                    collected_at=collected_at,
+                )
+                db.add(server_metric)
+            except Exception as e:
+                # 指标采集失败不影响磁盘采集
+                print(f"Warning: Failed to collect metrics for {server.name}: {e}")
             
             # 采集磁盘使用情况
             disks, all_mount_points = collect_disk_usage(ssh, scan_mounts, use_sudo=use_sudo)
@@ -267,6 +453,59 @@ def collect_all_servers(db: Session) -> List[Dict[str, Any]]:
     
     for server in servers:
         result = collect_server_data(db, server)
+        results.append(result)
+    
+    return results
+
+
+def collect_all_servers_metrics(db: Session) -> List[Dict[str, Any]]:
+    """
+    采集所有服务器的CPU和内存指标（不采集磁盘）
+    """
+    servers = db.query(Server).filter(Server.enabled == True).all()
+    results = []
+    
+    for server in servers:
+        result = {
+            'server_id': server.id,
+            'server_name': server.name,
+            'success': False,
+            'error': None,
+        }
+        
+        try:
+            ssh = SSHClient(
+                host=server.host,
+                port=server.port,
+                username=server.username,
+                password=server.password,
+                private_key_path=server.private_key_path,
+            )
+            
+            with ssh:
+                collected_at = datetime.utcnow()
+                use_sudo = bool(getattr(server, 'sudoer', False))
+                
+                metrics = collect_server_metrics(ssh, use_sudo=use_sudo)
+                import json as _json
+                server_metric = ServerMetrics(
+                    server_id=server.id,
+                    cpu_percent=metrics['cpu_percent'],
+                    memory_total_gb=metrics['memory_total_gb'],
+                    memory_used_gb=metrics['memory_used_gb'],
+                    memory_free_gb=metrics['memory_free_gb'],
+                    memory_percent=metrics['memory_percent'],
+                    gpu_info=_json.dumps(metrics.get('gpu_info', []), ensure_ascii=False) if metrics.get('gpu_info') else None,
+                    collected_at=collected_at,
+                )
+                db.add(server_metric)
+                db.commit()
+                result['success'] = True
+                
+        except Exception as e:
+            db.rollback()
+            result['error'] = str(e)
+        
         results.append(result)
     
     return results

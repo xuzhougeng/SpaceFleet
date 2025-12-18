@@ -8,7 +8,7 @@ from sqlalchemy import func, desc
 from sqlalchemy.exc import IntegrityError
 
 from app.database import get_db, SessionLocal
-from app.models import Server, DiskUsage, UserDiskUsage, AnalysisCache
+from app.models import Server, DiskUsage, UserDiskUsage, AnalysisCache, ServerMetrics
 from app.schemas import (
     DiskUsageResponse, 
     UserDiskUsageResponse,
@@ -20,6 +20,8 @@ from app.schemas import (
     LargeFileInfo,
     FileTypeAnalysisResponse,
     LargeFilesAnalysisResponse,
+    ServerMetricsResponse,
+    ServerMetricsSummary,
 )
 from app.config import settings
 from app.collector import collect_server_data, collect_all_servers, get_file_type_stats, get_top_large_files
@@ -442,3 +444,78 @@ def get_large_files(
         "refreshing": bool(cache.refreshing),
         "error": cache.error,
     }
+
+
+@router.get("/metrics/summary", response_model=List[ServerMetricsSummary])
+def get_metrics_summary(db: Session = Depends(get_db)):
+    """
+    获取所有服务器的CPU、内存和GPU指标概览（最新数据）
+    """
+    # 获取每个服务器的最新指标记录
+    subquery = (
+        db.query(
+            ServerMetrics.server_id,
+            func.max(ServerMetrics.collected_at).label('latest')
+        )
+        .group_by(ServerMetrics.server_id)
+        .subquery()
+    )
+    
+    latest_metrics = (
+        db.query(ServerMetrics, Server.name)
+        .join(Server)
+        .filter(Server.enabled == True)
+        .join(
+            subquery,
+            (ServerMetrics.server_id == subquery.c.server_id) &
+            (ServerMetrics.collected_at == subquery.c.latest)
+        )
+        .all()
+    )
+    
+    result = []
+    for metric, server_name in latest_metrics:
+        # 解析GPU信息
+        gpu_info = None
+        if metric.gpu_info:
+            try:
+                gpu_info = json.loads(metric.gpu_info)
+            except Exception:
+                gpu_info = None
+        
+        result.append(ServerMetricsSummary(
+            server_id=metric.server_id,
+            server_name=server_name,
+            cpu_percent=metric.cpu_percent,
+            memory_total_gb=metric.memory_total_gb,
+            memory_used_gb=metric.memory_used_gb,
+            memory_free_gb=metric.memory_free_gb,
+            memory_percent=metric.memory_percent,
+            gpu_info=gpu_info,
+            collected_at=metric.collected_at,
+        ))
+    
+    # 按服务器ID排序
+    result.sort(key=lambda x: x.server_id)
+    return result
+
+
+@router.get("/metrics/server/{server_id}", response_model=List[ServerMetricsResponse])
+def get_server_metrics(
+    server_id: int,
+    limit: int = Query(default=100, le=1000),
+    db: Session = Depends(get_db)
+):
+    """获取指定服务器的指标历史数据"""
+    server = db.query(Server).filter(Server.id == server_id).first()
+    if not server:
+        raise HTTPException(status_code=404, detail="Server not found")
+    
+    metrics = (
+        db.query(ServerMetrics)
+        .filter(ServerMetrics.server_id == server_id)
+        .order_by(desc(ServerMetrics.collected_at))
+        .limit(limit)
+        .all()
+    )
+    return metrics

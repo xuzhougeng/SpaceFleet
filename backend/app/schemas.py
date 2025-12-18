@@ -158,3 +158,47 @@ class FileTypeAnalysisResponse(AnalysisResponseBase):
 
 class LargeFilesAnalysisResponse(AnalysisResponseBase):
     items: List[LargeFileInfo]
+
+
+# ============ Server Metrics Schemas ============
+
+class GpuInfo(BaseModel):
+    """单个GPU信息"""
+    index: int
+    name: str
+    memory_total_mb: float
+    memory_used_mb: float
+    memory_percent: float
+    gpu_util_percent: float
+    temperature: float
+
+
+class ServerMetricsBase(BaseModel):
+    cpu_percent: float
+    memory_total_gb: float
+    memory_used_gb: float
+    memory_free_gb: float
+    memory_percent: float
+    gpu_info: Optional[List[GpuInfo]] = None
+
+
+class ServerMetricsResponse(ServerMetricsBase):
+    id: int
+    server_id: int
+    collected_at: datetime
+    
+    class Config:
+        from_attributes = True
+
+
+class ServerMetricsSummary(BaseModel):
+    """服务器指标概览（最新数据）"""
+    server_id: int
+    server_name: str
+    cpu_percent: float
+    memory_total_gb: float
+    memory_used_gb: float
+    memory_free_gb: float
+    memory_percent: float
+    gpu_info: Optional[List[GpuInfo]] = None
+    collected_at: datetime

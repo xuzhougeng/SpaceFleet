@@ -176,4 +176,20 @@ const api = {
     async healthCheck() {
         return this.request('/health');
     },
+
+    // ===== 服务器指标相关 =====
+
+    /**
+     * 获取所有服务器的CPU和内存指标概览
+     */
+    async getMetricsSummary() {
+        return this.request('/disks/metrics/summary');
+    },
+
+    /**
+     * 获取指定服务器的指标历史数据
+     */
+    async getServerMetrics(serverId, limit = 100) {
+        return this.request(`/disks/metrics/server/${serverId}?limit=${limit}`);
+    },
 };

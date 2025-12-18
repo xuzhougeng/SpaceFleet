@@ -5,7 +5,21 @@
 // ===== 全局状态 =====
 let servers = [];
 let diskSummary = [];
+let metricsSummary = [];
 let currentMountPoints = [];
+let metricsRefreshTimer = null;
+
+// 格式化时间为上海时区（后端存储的是UTC时间）
+function formatDateTime(dateStr) {
+    if (!dateStr) return '无';
+    // 后端返回的时间是UTC，但没有Z后缀，需要手动加上
+    let utcStr = dateStr;
+    if (!dateStr.endsWith('Z') && !dateStr.includes('+')) {
+        utcStr = dateStr + 'Z';
+    }
+    const date = new Date(utcStr);
+    return date.toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' });
+}
 
 // sudo 测试结果缓存（仅前端展示，不持久化）
 const sudoTestState = {
@@ -24,6 +38,7 @@ document.addEventListener('DOMContentLoaded', () => {
     initNavigation();
     initChart();
     loadDashboard();
+    startMetricsAutoRefresh();
 });
 
 // ===== 导航 =====
@@ -55,7 +70,7 @@ async function testSudo(id) {
 
     try {
         const result = await api.testSudo(id);
-        const at = new Date().toLocaleString();
+        const at = formatDateTime(new Date());
         if (result.success) {
             const who = result.sudo_whoami ? `（whoami: ${result.sudo_whoami}）` : '';
             const msg = `✅ 可用${who}`;
@@ -69,7 +84,7 @@ async function testSudo(id) {
             showToast(msg, 'error');
         }
     } catch (error) {
-        const at = new Date().toLocaleString();
+        const at = formatDateTime(new Date());
         const msg = `❌ 测试失败: ${error.message}`;
         sudoTestState.results.set(id, { status: 'error', message: msg, at, details: null });
         showToast(msg, 'error');
@@ -80,7 +95,7 @@ async function testSudo(id) {
 }
 
 function renderAnalysisMeta(meta, tabName) {
-    const collectedAt = meta.collected_at ? new Date(meta.collected_at).toLocaleString() : '无';
+    const collectedAt = formatDateTime(meta.collected_at);
     const staleText = meta.is_stale ? '（已过期）' : '';
     const refreshingText = meta.refreshing ? '正在后台刷新...' : '';
     const err = meta.error ? `错误: ${meta.error}` : '';
@@ -126,6 +141,11 @@ function switchPage(pageName) {
     switch (pageName) {
         case 'dashboard':
             loadDashboard();
+            // 确保定时器运行
+            startMetricsAutoRefresh();
+            break;
+        case 'disks':
+            loadDisksPage();
             break;
         case 'servers':
             loadServers();
@@ -138,15 +158,59 @@ function switchPage(pageName) {
 
 // ===== 仪表盘 =====
 async function loadDashboard() {
+    const metricsContainer = document.getElementById('metrics-cards');
+    if (metricsContainer) {
+        metricsContainer.innerHTML = '<div class="loading">加载中...</div>';
+    }
+    
+    try {
+        // 加载指标数据
+        try {
+            metricsSummary = await api.getMetricsSummary();
+        } catch (error) {
+            console.warn('Failed to load metrics:', error);
+            metricsSummary = [];
+        }
+        
+        // 渲染指标卡片
+        if (metricsContainer) {
+            if (metricsSummary.length === 0) {
+                metricsContainer.innerHTML = `
+                    <div class="empty-state">
+                        <div class="icon">📊</div>
+                        <p>暂无服务器指标数据</p>
+                        <p>等待定时采集...</p>
+                    </div>
+                `;
+            } else {
+                metricsContainer.innerHTML = metricsSummary.map(metric => renderMetricsCard(metric)).join('');
+            }
+        }
+    } catch (error) {
+        if (metricsContainer) {
+            metricsContainer.innerHTML = `
+                <div class="empty-state">
+                    <div class="icon">❌</div>
+                    <p>加载失败: ${error.message}</p>
+                    <p>请确保后端服务已启动</p>
+                </div>
+            `;
+        }
+    }
+}
+
+// ===== 磁盘页面 =====
+async function loadDisksPage() {
     const cardsContainer = document.getElementById('disk-cards');
     const alertsSection = document.getElementById('alerts-section');
     const alertsList = document.getElementById('alerts-list');
-    
+
+    if (!cardsContainer) return;
     cardsContainer.innerHTML = '<div class="loading">加载中...</div>';
-    
+
     try {
         diskSummary = await api.getDiskSummary();
-        
+
         if (diskSummary.length === 0) {
             cardsContainer.innerHTML = `
                 <div class="empty-state">
@@ -155,24 +219,24 @@ async function loadDashboard() {
                     <p>请先添加服务器并采集数据</p>
                 </div>
             `;
-            alertsSection.classList.add('hidden');
+            if (alertsSection) alertsSection.classList.add('hidden');
             return;
         }
-        
+
         // 显示告警
         const alerts = diskSummary.filter(d => d.is_alert);
-        if (alerts.length > 0) {
-            alertsSection.classList.remove('hidden');
-            alertsList.innerHTML = alerts.map(d => 
-                `<span class="alert-tag">${d.server_name} ${d.mount_point} (${d.use_percent.toFixed(1)}%)</span>`
-            ).join('');
-        } else {
-            alertsSection.classList.add('hidden');
+        if (alertsSection && alertsList) {
+            if (alerts.length > 0) {
+                alertsSection.classList.remove('hidden');
+                alertsList.innerHTML = alerts.map(d =>
+                    `<span class="alert-tag">${d.server_name} ${d.mount_point} (${d.use_percent.toFixed(1)}%)</span>`
+                ).join('');
+            } else {
+                alertsSection.classList.add('hidden');
+            }
         }
-        
-        // 渲染磁盘卡片
+
         cardsContainer.innerHTML = diskSummary.map(disk => renderDiskCard(disk)).join('');
-        
     } catch (error) {
         cardsContainer.innerHTML = `
             <div class="empty-state">
@@ -181,8 +245,116 @@ async function loadDashboard() {
                 <p>请确保后端服务已启动</p>
             </div>
         `;
-        alertsSection.classList.add('hidden');
+        if (alertsSection) alertsSection.classList.add('hidden');
     }
+}
+
+function renderGpuItem(gpu) {
+    const memClass = gpu.memory_percent >= 80 ? 'danger' : gpu.memory_percent >= 60 ? 'warning' : '';
+    const utilClass = gpu.gpu_util_percent >= 80 ? 'danger' : gpu.gpu_util_percent >= 60 ? 'warning' : '';
+    const tempClass = gpu.temperature >= 80 ? 'danger' : gpu.temperature >= 70 ? 'warning' : '';
+    
+    return `
+        <div class="gpu-item">
+            <div class="gpu-header">
+                <span class="gpu-name">GPU ${gpu.index}: ${gpu.name}</span>
+                <span class="gpu-temp ${tempClass}">${gpu.temperature}°C</span>
+            </div>
+            <div class="gpu-metrics">
+                <div class="gpu-metric">
+                    <span class="gpu-metric-label">显存</span>
+                    <span class="gpu-metric-value ${memClass}">${gpu.memory_percent.toFixed(0)}%</span>
+                    <div class="progress-bar progress-bar-sm">
+                        <div class="progress-fill ${memClass}" style="width: ${Math.min(gpu.memory_percent, 100)}%"></div>
+                    </div>
+                    <span class="gpu-metric-detail">${gpu.memory_used_mb}/${gpu.memory_total_mb} MB</span>
+                </div>
+                <div class="gpu-metric">
+                    <span class="gpu-metric-label">算力</span>
+                    <span class="gpu-metric-value ${utilClass}">${gpu.gpu_util_percent.toFixed(0)}%</span>
+                    <div class="progress-bar progress-bar-sm">
+                        <div class="progress-fill ${utilClass}" style="width: ${Math.min(gpu.gpu_util_percent, 100)}%"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+function renderMetricsCard(metric) {
+    const cpuClass = metric.cpu_percent >= 80 ? 'danger' : metric.cpu_percent >= 60 ? 'warning' : '';
+    const memClass = metric.memory_percent >= 80 ? 'danger' : metric.memory_percent >= 60 ? 'warning' : '';
+    const collectedAt = formatDateTime(metric.collected_at);
+    
+    // 渲染GPU信息
+    const gpuHtml = (metric.gpu_info && metric.gpu_info.length > 0)
+        ? `<div class="gpu-section">
+            <div class="metric-label">GPU</div>
+            ${metric.gpu_info.map(gpu => renderGpuItem(gpu)).join('')}
+           </div>`
+        : '';
+    
+    return `
+        <div class="metrics-card ${metric.gpu_info && metric.gpu_info.length > 0 ? 'has-gpu' : ''}">
+            <div class="metrics-card-header">
+                <div class="metrics-card-title">${metric.server_name}</div>
+                <div class="metrics-card-time">${collectedAt}</div>
+            </div>
+            <div class="metrics-card-body">
+                <div class="metric-item">
+                    <div class="metric-label">CPU 使用率</div>
+                    <div class="metric-value ${cpuClass}">${metric.cpu_percent.toFixed(1)}%</div>
+                    <div class="progress-bar">
+                        <div class="progress-fill ${cpuClass}" style="width: ${Math.min(metric.cpu_percent, 100)}%"></div>
+                    </div>
+                </div>
+                <div class="metric-item">
+                    <div class="metric-label">内存使用率</div>
+                    <div class="metric-value ${memClass}">${metric.memory_percent.toFixed(1)}%</div>
+                    <div class="progress-bar">
+                        <div class="progress-fill ${memClass}" style="width: ${Math.min(metric.memory_percent, 100)}%"></div>
+                    </div>
+                    <div class="metric-detail">
+                        已用: ${metric.memory_used_gb.toFixed(1)} GB / 总计: ${metric.memory_total_gb.toFixed(1)} GB
+                    </div>
+                </div>
+                ${gpuHtml}
+            </div>
+        </div>
+    `;
+}
+
+function startMetricsAutoRefresh() {
+    // 每1分钟刷新一次指标数据
+    if (metricsRefreshTimer) {
+        clearInterval(metricsRefreshTimer);
+    }
+    
+    metricsRefreshTimer = setInterval(async () => {
+        // 只在仪表盘页面时刷新
+        const dashboardPage = document.getElementById('page-dashboard');
+        if (dashboardPage && dashboardPage.classList.contains('active')) {
+            try {
+                metricsSummary = await api.getMetricsSummary();
+                const metricsContainer = document.getElementById('metrics-cards');
+                if (metricsContainer) {
+                    if (metricsSummary.length === 0) {
+                        metricsContainer.innerHTML = `
+                            <div class="empty-state">
+                                <div class="icon">📊</div>
+                                <p>暂无服务器指标数据</p>
+                                <p>等待定时采集...</p>
+                            </div>
+                        `;
+                    } else {
+                        metricsContainer.innerHTML = metricsSummary.map(metric => renderMetricsCard(metric)).join('');
+                    }
+                }
+            } catch (error) {
+                console.warn('Failed to refresh metrics:', error);
+            }
+        }
+    }, 60000); // 60秒 = 1分钟
 }
 
 function renderDiskCard(disk) {
@@ -253,7 +425,7 @@ async function collectAllData() {
         }
         
         // 刷新仪表盘
-        loadDashboard();
+        loadDisksPage();
     } catch (error) {
         showToast('采集失败: ' + error.message, 'error');
     } finally {
@@ -263,7 +435,7 @@ async function collectAllData() {
 }
 
 function updateCollectAllButton(isCollecting) {
-    const btn = document.querySelector('#page-dashboard .page-header .btn-primary');
+    const btn = document.querySelector('#page-disks .page-header .btn-primary');
     if (btn) {
         btn.disabled = isCollecting;
         btn.innerHTML = isCollecting 
