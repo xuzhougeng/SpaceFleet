@@ -26,3 +26,6 @@ yarn-error.log*
 
 # OS
 Thumbs.db
+
+# AI
+.cursor/

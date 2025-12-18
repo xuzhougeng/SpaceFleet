@@ -37,7 +37,13 @@ const collectingState = {
 document.addEventListener('DOMContentLoaded', () => {
     initNavigation();
     initChart();
-    loadDashboard();
+    
+    // 从 URL hash 恢复页面
+    const hash = location.hash.slice(1);
+    const validPages = ['dashboard', 'disks', 'servers', 'trends', 'alerts'];
+    const initialPage = validPages.includes(hash) ? hash : 'dashboard';
+    switchPage(initialPage);
+    
     startMetricsAutoRefresh();
 });
 
@@ -132,6 +138,9 @@ async function forceRefreshDetailTab(tabName) {
 }
 
 function switchPage(pageName) {
+    // 更新 URL hash
+    location.hash = pageName;
+    
     // 更新导航状态
     document.querySelectorAll('.nav-item').forEach(item => {
         item.classList.toggle('active', item.dataset.page === pageName);

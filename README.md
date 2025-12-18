@@ -234,5 +234,5 @@ YOUR_USER ALL=(ALL) NOPASSWD: /usr/bin/du, /usr/bin/find, /usr/bin/stat, /bin/df
 - [x] Phase 2: 数据采集 + 定时任务
 - [x] Phase 3: 前端界面
 - [ ] Phase 4: 增强功能
-  - [ ] 告警通知 (邮件/钉钉/企业微信)
+  - [x] 告警通知 (邮件/钉钉/企业微信)
   - [ ] 大文件定位
