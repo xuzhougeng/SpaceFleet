@@ -164,6 +164,21 @@ def _check_metric(
             except json.JSONDecodeError:
                 pass
     
+    elif metric_type == "offline":
+        # 检查服务器是否离线：最近3分钟内没有指标数据
+        metrics = db.query(ServerMetrics).filter(
+            ServerMetrics.server_id == server.id
+        ).order_by(ServerMetrics.collected_at.desc()).first()
+        
+        now = datetime.utcnow()
+        if not metrics:
+            # 从未有过数据，视为离线
+            return True, 0.0
+        
+        # 超过3分钟没有数据视为离线
+        if now - metrics.collected_at > timedelta(minutes=3):
+            return True, 0.0
+    
     return False, 0.0
 
 
@@ -180,14 +195,20 @@ def _send_alert(
         "disk": "磁盘使用率",
         "gpu_memory": "GPU 显存",
         "gpu_util": "GPU 算力",
+        "offline": "服务器离线",
     }
     metric_name = metric_names.get(alert.metric_type, alert.metric_type)
     
     # 构建通知内容
     title = f"⚠️ {alert.name}"
-    lines = [f"指标: {metric_name} >= {alert.threshold}%"]
-    for srv in triggered_servers[:5]:  # 最多显示5个
-        lines.append(f"• {srv['server_name']}: {srv['current_value']:.1f}%")
+    if alert.metric_type == "offline":
+        lines = [f"检测到服务器离线"]
+        for srv in triggered_servers[:5]:
+            lines.append(f"• {srv['server_name']}")
+    else:
+        lines = [f"指标: {metric_name} >= {alert.threshold}%"]
+        for srv in triggered_servers[:5]:  # 最多显示5个
+            lines.append(f"• {srv['server_name']}: {srv['current_value']:.1f}%")
     if len(triggered_servers) > 5:
         lines.append(f"...等 {len(triggered_servers)} 台服务器")
     body = "\n".join(lines)

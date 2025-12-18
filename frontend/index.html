@@ -205,12 +205,13 @@
                 <div class="form-row">
                     <div class="form-group">
                         <label for="alert-metric">监控指标 *</label>
-                        <select id="alert-metric" required>
+                        <select id="alert-metric" required onchange="toggleThresholdField()">
                             <option value="cpu">CPU 使用率</option>
                             <option value="memory">内存使用率</option>
                             <option value="disk">磁盘使用率</option>
                             <option value="gpu_memory">GPU 显存</option>
                             <option value="gpu_util">GPU 算力</option>
+                            <option value="offline">服务器离线</option>
                         </select>
                     </div>
                     <div class="form-group">

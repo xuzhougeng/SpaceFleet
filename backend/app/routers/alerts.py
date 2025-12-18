@@ -40,7 +40,7 @@ def get_alert(alert_id: int, db: Session = Depends(get_db)):
 def create_alert(alert_data: AlertConfigCreate, db: Session = Depends(get_db)):
     """创建告警配置"""
     # 验证 metric_type
-    valid_types = ["cpu", "memory", "disk", "gpu_memory", "gpu_util"]
+    valid_types = ["cpu", "memory", "disk", "gpu_memory", "gpu_util", "offline"]
     if alert_data.metric_type not in valid_types:
         raise HTTPException(status_code=400, detail=f"Invalid metric_type. Must be one of: {valid_types}")
     
@@ -73,7 +73,7 @@ def update_alert(alert_id: int, alert_data: AlertConfigUpdate, db: Session = Dep
     
     # 验证 metric_type
     if "metric_type" in update_data:
-        valid_types = ["cpu", "memory", "disk", "gpu_memory", "gpu_util"]
+        valid_types = ["cpu", "memory", "disk", "gpu_memory", "gpu_util", "offline"]
         if update_data["metric_type"] not in valid_types:
             raise HTTPException(status_code=400, detail=f"Invalid metric_type. Must be one of: {valid_types}")
     

@@ -1045,7 +1045,18 @@ const METRIC_TYPE_NAMES = {
     disk: '磁盘使用率',
     gpu_memory: 'GPU 显存',
     gpu_util: 'GPU 算力',
+    offline: '服务器离线',
 };
+
+function toggleThresholdField() {
+    const metric = document.getElementById('alert-metric').value;
+    const thresholdGroup = document.getElementById('alert-threshold').closest('.form-group');
+    if (metric === 'offline') {
+        thresholdGroup.style.display = 'none';
+    } else {
+        thresholdGroup.style.display = 'block';
+    }
+}
 
 async function loadAlertsPage() {
     const container = document.getElementById('alerts-config-list');
@@ -1126,6 +1137,7 @@ async function showAddAlertModal() {
     
     // 加载服务器列表
     await loadAlertServerOptions();
+    toggleThresholdField();
     
     document.getElementById('alert-modal').classList.remove('hidden');
 }
@@ -1161,6 +1173,7 @@ async function editAlert(id) {
         // 加载服务器列表并设置选中值
         await loadAlertServerOptions();
         document.getElementById('alert-server').value = alert.server_id || '';
+        toggleThresholdField();
         
         document.getElementById('alert-modal').classList.remove('hidden');
     } catch (error) {
@@ -1173,11 +1186,12 @@ async function saveAlert(event) {
     
     const id = document.getElementById('alert-id').value;
     const serverId = document.getElementById('alert-server').value;
+    const metricType = document.getElementById('alert-metric').value;
     
     const data = {
         name: document.getElementById('alert-name').value,
-        metric_type: document.getElementById('alert-metric').value,
-        threshold: parseFloat(document.getElementById('alert-threshold').value),
+        metric_type: metricType,
+        threshold: metricType === 'offline' ? 0 : parseFloat(document.getElementById('alert-threshold').value),
         server_id: serverId ? parseInt(serverId) : null,
         bark_url: document.getElementById('alert-bark-url').value,
         bark_sound: document.getElementById('alert-bark-sound').value || null,
