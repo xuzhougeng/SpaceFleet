@@ -192,4 +192,58 @@ const api = {
     async getServerMetrics(serverId, limit = 100) {
         return this.request(`/disks/metrics/server/${serverId}?limit=${limit}`);
     },
+
+    // ===== 告警配置相关 =====
+
+    /**
+     * 获取所有告警配置
+     */
+    async getAlerts() {
+        return this.request('/alerts/');
+    },
+
+    /**
+     * 获取单个告警配置
+     */
+    async getAlert(id) {
+        return this.request(`/alerts/${id}`);
+    },
+
+    /**
+     * 创建告警配置
+     */
+    async createAlert(data) {
+        return this.request('/alerts/', {
+            method: 'POST',
+            body: JSON.stringify(data),
+        });
+    },
+
+    /**
+     * 更新告警配置
+     */
+    async updateAlert(id, data) {
+        return this.request(`/alerts/${id}`, {
+            method: 'PUT',
+            body: JSON.stringify(data),
+        });
+    },
+
+    /**
+     * 删除告警配置
+     */
+    async deleteAlert(id) {
+        return this.request(`/alerts/${id}`, {
+            method: 'DELETE',
+        });
+    },
+
+    /**
+     * 测试告警通知
+     */
+    async testAlert(id) {
+        return this.request(`/alerts/${id}/test`, {
+            method: 'POST',
+        });
+    },
 };

@@ -20,6 +20,13 @@ def scheduled_collection():
         for r in results:
             if not r['success']:
                 print(f"  Failed: {r['server_name']} - {r['error']}")
+        
+        # 检查告警规则并发送通知
+        try:
+            from app.notifier import check_and_notify
+            check_and_notify(db)
+        except Exception as e:
+            print(f"Alert check failed: {e}")
     finally:
         db.close()
 
@@ -35,6 +42,13 @@ def scheduled_metrics_collection():
         for r in results:
             if not r['success']:
                 print(f"  Failed: {r['server_name']} - {r['error']}")
+        
+        # 检查告警规则并发送通知
+        try:
+            from app.notifier import check_and_notify
+            check_and_notify(db)
+        except Exception as e:
+            print(f"Alert check failed: {e}")
     finally:
         db.close()
 

@@ -202,3 +202,42 @@ class ServerMetricsSummary(BaseModel):
     memory_percent: float
     gpu_info: Optional[List[GpuInfo]] = None
     collected_at: datetime
+
+
+# ============ Alert Config Schemas ============
+
+class AlertConfigBase(BaseModel):
+    name: str
+    metric_type: str  # cpu / memory / disk / gpu_memory / gpu_util
+    threshold: float
+    server_id: Optional[int] = None
+    enabled: bool = True
+    bark_url: str
+    bark_sound: Optional[str] = None
+    cooldown_minutes: int = 30
+
+
+class AlertConfigCreate(AlertConfigBase):
+    pass
+
+
+class AlertConfigUpdate(BaseModel):
+    name: Optional[str] = None
+    metric_type: Optional[str] = None
+    threshold: Optional[float] = None
+    server_id: Optional[int] = None
+    enabled: Optional[bool] = None
+    bark_url: Optional[str] = None
+    bark_sound: Optional[str] = None
+    cooldown_minutes: Optional[int] = None
+
+
+class AlertConfigResponse(AlertConfigBase):
+    id: int
+    last_triggered_at: Optional[datetime] = None
+    created_at: datetime
+    updated_at: datetime
+    server_name: Optional[str] = None  # 关联的服务器名称
+
+    class Config:
+        from_attributes = True

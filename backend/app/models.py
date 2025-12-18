@@ -102,3 +102,24 @@ class AnalysisCache(Base):
     refreshing = Column(Boolean, default=False)
     error = Column(Text, nullable=True)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class AlertConfig(Base):
+    """告警配置"""
+    __tablename__ = "alert_configs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(100), nullable=False)  # 规则名称
+    metric_type = Column(String(20), nullable=False)  # cpu / memory / disk / gpu_memory / gpu_util
+    threshold = Column(Float, nullable=False)  # 阈值百分比
+    server_id = Column(Integer, ForeignKey("servers.id"), nullable=True)  # 指定服务器，null 表示全部
+    enabled = Column(Boolean, default=True)  # 是否启用
+    bark_url = Column(String(500), nullable=False)  # Bark 推送 URL
+    bark_sound = Column(String(50), nullable=True)  # Bark 提示音
+    cooldown_minutes = Column(Integer, default=30)  # 告警冷却时间（分钟）
+    last_triggered_at = Column(DateTime, nullable=True)  # 上次触发时间
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # Relationships
+    server = relationship("Server")

@@ -11,7 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 
 from app.database import engine, Base
-from app.routers import servers, disks
+from app.routers import servers, disks, alerts
 from app.scheduler import start_scheduler, stop_scheduler
 
 
@@ -63,6 +63,7 @@ app.add_middleware(
 # 注册路由
 app.include_router(servers.router, prefix="/api")
 app.include_router(disks.router, prefix="/api")
+app.include_router(alerts.router, prefix="/api")
 
 # 静态文件目录
 FRONTEND_DIR = Path(__file__).parent.parent.parent / "frontend"

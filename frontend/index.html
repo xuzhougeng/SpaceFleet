@@ -31,6 +31,10 @@
                     <span class="icon">📈</span>
                     <span>趋势分析</span>
                 </li>
+                <li class="nav-item" data-page="alerts">
+                    <span class="icon">🔔</span>
+                    <span>告警配置</span>
+                </li>
             </ul>
         </nav>
 
@@ -100,6 +104,17 @@
                 <div id="trend-chart" class="trend-chart">
                     <canvas id="chart-canvas"></canvas>
                 </div>
+            </section>
+
+            <!-- 告警配置页面 -->
+            <section id="page-alerts" class="page">
+                <header class="page-header">
+                    <h2>告警配置</h2>
+                    <button class="btn btn-primary" onclick="showAddAlertModal()">
+                        ➕ 添加规则
+                    </button>
+                </header>
+                <div id="alerts-config-list" class="servers-list"></div>
             </section>
         </main>
     </div>
@@ -171,6 +186,71 @@
                 <button class="btn-close" onclick="closeUsersModal()">&times;</button>
             </div>
             <div id="users-list" class="users-list"></div>
+        </div>
+    </div>
+
+    <!-- 告警配置模态框 -->
+    <div id="alert-modal" class="modal hidden">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="alert-modal-title">添加告警规则</h3>
+                <button class="btn-close" onclick="closeAlertModal()">&times;</button>
+            </div>
+            <form id="alert-form" onsubmit="saveAlert(event)">
+                <input type="hidden" id="alert-id">
+                <div class="form-group">
+                    <label for="alert-name">规则名称 *</label>
+                    <input type="text" id="alert-name" required placeholder="例如: CPU 高负载告警">
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="alert-metric">监控指标 *</label>
+                        <select id="alert-metric" required>
+                            <option value="cpu">CPU 使用率</option>
+                            <option value="memory">内存使用率</option>
+                            <option value="disk">磁盘使用率</option>
+                            <option value="gpu_memory">GPU 显存</option>
+                            <option value="gpu_util">GPU 算力</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="alert-threshold">阈值 (%) *</label>
+                        <input type="number" id="alert-threshold" required min="1" max="100" value="80" placeholder="80">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label for="alert-server">目标服务器</label>
+                    <select id="alert-server">
+                        <option value="">所有服务器</option>
+                    </select>
+                    <small class="form-hint">留空表示监控所有服务器</small>
+                </div>
+                <div class="form-group">
+                    <label for="alert-bark-url">Bark 推送 URL *</label>
+                    <input type="text" id="alert-bark-url" required placeholder="https://api.day.app/YOUR_KEY">
+                    <small class="form-hint">从 Bark App 获取推送 URL</small>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="alert-bark-sound">提示音</label>
+                        <input type="text" id="alert-bark-sound" placeholder="例如: alarm">
+                    </div>
+                    <div class="form-group">
+                        <label for="alert-cooldown">冷却时间 (分钟)</label>
+                        <input type="number" id="alert-cooldown" min="1" value="30" placeholder="30">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="alert-enabled" checked>
+                        启用此规则
+                    </label>
+                </div>
+                <div class="form-actions">
+                    <button type="button" class="btn btn-secondary" onclick="closeAlertModal()">取消</button>
+                    <button type="submit" class="btn btn-primary">保存</button>
+                </div>
+            </form>
         </div>
     </div>
 

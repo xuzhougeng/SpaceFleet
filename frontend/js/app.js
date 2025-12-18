@@ -158,6 +158,9 @@ function switchPage(pageName) {
         case 'trends':
             loadTrendPage();
             break;
+        case 'alerts':
+            loadAlertsPage();
+            break;
     }
 }
 
@@ -1032,3 +1035,211 @@ document.addEventListener('click', (e) => {
         e.target.classList.add('hidden');
     }
 });
+
+// ===== 告警配置管理 =====
+let alertConfigs = [];
+
+const METRIC_TYPE_NAMES = {
+    cpu: 'CPU 使用率',
+    memory: '内存使用率',
+    disk: '磁盘使用率',
+    gpu_memory: 'GPU 显存',
+    gpu_util: 'GPU 算力',
+};
+
+async function loadAlertsPage() {
+    const container = document.getElementById('alerts-config-list');
+    container.innerHTML = '<div class="loading">加载中...</div>';
+    
+    try {
+        alertConfigs = await api.getAlerts();
+        
+        if (alertConfigs.length === 0) {
+            container.innerHTML = `
+                <div class="empty-state">
+                    <div class="icon">🔔</div>
+                    <p>暂无告警规则</p>
+                    <p>点击上方按钮添加规则</p>
+                </div>
+            `;
+            return;
+        }
+        
+        container.innerHTML = alertConfigs.map(alert => renderAlertCard(alert)).join('');
+    } catch (error) {
+        container.innerHTML = `
+            <div class="empty-state">
+                <div class="icon">❌</div>
+                <p>加载失败: ${error.message}</p>
+            </div>
+        `;
+    }
+}
+
+function renderAlertCard(alert) {
+    const metricName = METRIC_TYPE_NAMES[alert.metric_type] || alert.metric_type;
+    const serverTarget = alert.server_name || '所有服务器';
+    const enabledTag = alert.enabled
+        ? '<span class="server-status enabled">✅ 启用</span>'
+        : '<span class="server-status disabled">🚫 禁用</span>';
+    const lastTriggered = alert.last_triggered_at
+        ? `上次触发: ${formatDateTime(alert.last_triggered_at)}`
+        : '从未触发';
+    
+    const toggleBtn = alert.enabled
+        ? `<button class="btn btn-sm btn-warning" onclick="toggleAlertEnabled(${alert.id}, false)">🚫 禁用</button>`
+        : `<button class="btn btn-sm btn-secondary" onclick="toggleAlertEnabled(${alert.id}, true)">✅ 启用</button>`;
+    
+    return `
+        <div class="server-card ${alert.enabled ? '' : 'disabled'}">
+            <div class="server-info">
+                <div class="server-name">${alert.name}</div>
+                <div class="server-host">
+                    ${metricName} >= ${alert.threshold}% | 目标: ${serverTarget} | 冷却: ${alert.cooldown_minutes}分钟
+                    ${enabledTag}
+                </div>
+                <div class="server-description">${lastTriggered}</div>
+            </div>
+            <div class="server-actions">
+                <button class="btn btn-sm btn-secondary" onclick="testAlertNotification(${alert.id})">
+                    🔔 测试通知
+                </button>
+                <button class="btn btn-sm btn-secondary" onclick="editAlert(${alert.id})">
+                    ✏️ 编辑
+                </button>
+                ${toggleBtn}
+                <button class="btn btn-sm btn-danger" onclick="deleteAlert(${alert.id})">
+                    🗑️ 删除
+                </button>
+            </div>
+        </div>
+    `;
+}
+
+async function showAddAlertModal() {
+    document.getElementById('alert-modal-title').textContent = '添加告警规则';
+    document.getElementById('alert-form').reset();
+    document.getElementById('alert-id').value = '';
+    document.getElementById('alert-threshold').value = '80';
+    document.getElementById('alert-cooldown').value = '30';
+    document.getElementById('alert-enabled').checked = true;
+    
+    // 加载服务器列表
+    await loadAlertServerOptions();
+    
+    document.getElementById('alert-modal').classList.remove('hidden');
+}
+
+async function loadAlertServerOptions() {
+    const select = document.getElementById('alert-server');
+    select.innerHTML = '<option value="">所有服务器</option>';
+    
+    try {
+        const serverList = await api.getServers();
+        serverList.forEach(server => {
+            select.innerHTML += `<option value="${server.id}">${server.name}</option>`;
+        });
+    } catch (error) {
+        console.warn('Failed to load servers for alert:', error);
+    }
+}
+
+async function editAlert(id) {
+    try {
+        const alert = await api.getAlert(id);
+        
+        document.getElementById('alert-modal-title').textContent = '编辑告警规则';
+        document.getElementById('alert-id').value = alert.id;
+        document.getElementById('alert-name').value = alert.name;
+        document.getElementById('alert-metric').value = alert.metric_type;
+        document.getElementById('alert-threshold').value = alert.threshold;
+        document.getElementById('alert-bark-url').value = alert.bark_url;
+        document.getElementById('alert-bark-sound').value = alert.bark_sound || '';
+        document.getElementById('alert-cooldown').value = alert.cooldown_minutes;
+        document.getElementById('alert-enabled').checked = alert.enabled;
+        
+        // 加载服务器列表并设置选中值
+        await loadAlertServerOptions();
+        document.getElementById('alert-server').value = alert.server_id || '';
+        
+        document.getElementById('alert-modal').classList.remove('hidden');
+    } catch (error) {
+        showToast('获取告警配置失败: ' + error.message, 'error');
+    }
+}
+
+async function saveAlert(event) {
+    event.preventDefault();
+    
+    const id = document.getElementById('alert-id').value;
+    const serverId = document.getElementById('alert-server').value;
+    
+    const data = {
+        name: document.getElementById('alert-name').value,
+        metric_type: document.getElementById('alert-metric').value,
+        threshold: parseFloat(document.getElementById('alert-threshold').value),
+        server_id: serverId ? parseInt(serverId) : null,
+        bark_url: document.getElementById('alert-bark-url').value,
+        bark_sound: document.getElementById('alert-bark-sound').value || null,
+        cooldown_minutes: parseInt(document.getElementById('alert-cooldown').value) || 30,
+        enabled: document.getElementById('alert-enabled').checked,
+    };
+    
+    try {
+        if (id) {
+            await api.updateAlert(id, data);
+            showToast('告警规则已更新', 'success');
+        } else {
+            await api.createAlert(data);
+            showToast('告警规则已创建', 'success');
+        }
+        
+        closeAlertModal();
+        loadAlertsPage();
+    } catch (error) {
+        showToast('保存失败: ' + error.message, 'error');
+    }
+}
+
+async function deleteAlert(id) {
+    if (!confirm('确定要删除这条告警规则吗？')) {
+        return;
+    }
+    
+    try {
+        await api.deleteAlert(id);
+        showToast('告警规则已删除', 'success');
+        loadAlertsPage();
+    } catch (error) {
+        showToast('删除失败: ' + error.message, 'error');
+    }
+}
+
+async function toggleAlertEnabled(id, enabled) {
+    try {
+        await api.updateAlert(id, { enabled });
+        showToast(enabled ? '告警规则已启用' : '告警规则已禁用', 'success');
+        loadAlertsPage();
+    } catch (error) {
+        showToast('操作失败: ' + error.message, 'error');
+    }
+}
+
+async function testAlertNotification(id) {
+    showToast('正在发送测试通知...', 'info');
+    
+    try {
+        const result = await api.testAlert(id);
+        if (result.success) {
+            showToast('测试通知发送成功!', 'success');
+        } else {
+            showToast('发送失败: ' + result.message, 'error');
+        }
+    } catch (error) {
+        showToast('测试失败: ' + error.message, 'error');
+    }
+}
+
+function closeAlertModal() {
+    document.getElementById('alert-modal').classList.add('hidden');
+}
