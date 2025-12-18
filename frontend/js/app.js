@@ -41,6 +41,11 @@ document.addEventListener('DOMContentLoaded', () => {
     startMetricsAutoRefresh();
 });
 
+// ===== 侧边栏折叠 =====
+function toggleSidebar() {
+    document.querySelector('.sidebar').classList.toggle('collapsed');
+}
+
 // ===== 导航 =====
 function initNavigation() {
     const navItems = document.querySelectorAll('.nav-item');
